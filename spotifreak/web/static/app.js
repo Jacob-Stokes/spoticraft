@@ -1,4 +1,5 @@
 const supervisorStatusEl = document.getElementById("supervisor-status");
+const activityLogEl = document.getElementById("sync-activity-log");
 const syncListEl = document.getElementById("sync-list");
 const lastUpdatedEl = document.getElementById("last-updated");
 const notificationsEl = document.getElementById("notifications");
@@ -32,6 +33,9 @@ const deleteButton = document.getElementById("delete-sync");
 const saveButton = document.getElementById("save-sync");
 const editorSummary = document.getElementById("editor-summary");
 const editorTextarea = document.getElementById("config-editor");
+const syncsTabButtons = Array.from(document.querySelectorAll("[data-syncs-tab]"));
+const syncsTabPanes = Array.from(document.querySelectorAll("[data-syncs-tab-content]"));
+const syncsPanelActions = document.querySelector("[data-syncs-actions]");
 
 const CONFIG_UI_AVAILABLE = Boolean(
   configTable &&
@@ -63,12 +67,19 @@ const ASSETS_UI_AVAILABLE = Boolean(
 const THEME_STORAGE_KEY = "spotifreak-theme";
 const THEME_OPTIONS = new Set(["light", "dark", "system"]);
 
+const SUPERVISOR_LOG_LIMIT = 15;
+
 const state = {
   refreshTimer: null,
   configs: [],
   filteredConfigs: [],
   templates: [],
   assets: [],
+  logs: [],
+  assetFolders: {},
+  view: {
+    syncsTab: "syncs",
+  },
   theme: {
     mode: "system",
   },
@@ -207,6 +218,121 @@ function formatDuration(startedAt, completedAt) {
   const minutes = Math.floor(diffMs / 60_000);
   const seconds = Math.round((diffMs % 60_000) / 1000);
   return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function logStatusClass(status) {
+  const normalised = (status || "").toLowerCase();
+  if (normalised === "success") {
+    return "success";
+  }
+  if (normalised === "failed" || normalised === "error") {
+    return "failed";
+  }
+  if (normalised === "rate_limited" || normalised === "warn") {
+    return "warn";
+  }
+  return "";
+}
+
+function summariseLogEntry(entry) {
+  const timestamp = entry.completed_at || entry.started_at;
+  const formattedTime = formatTimestamp(timestamp);
+  const parts = [];
+
+  if (entry.details) {
+    const { status, processed, added, targets, reason } = entry.details;
+    if (typeof processed === "number" && typeof added === "number") {
+      parts.push(`processed ${processed} • added ${added}`);
+    } else if (typeof processed === "number") {
+      parts.push(`processed ${processed}`);
+    } else if (typeof added === "number") {
+      parts.push(`added ${added}`);
+    }
+
+    if (typeof targets === "number") {
+      parts.push(`${targets} target${targets === 1 ? "" : "s"}`);
+    }
+
+    if (reason && typeof reason === "string") {
+      parts.push(reason);
+    } else if (status && typeof status === "string" && status.toLowerCase() !== entry.status?.toLowerCase()) {
+      parts.push(status);
+    }
+  }
+
+  if (entry.error) {
+    parts.push(entry.error);
+  }
+
+  const message = parts.length ? parts.join(" • ") : "No additional details";
+  return {
+    timestamp: formattedTime,
+    message,
+    className: logStatusClass(entry.status),
+  };
+}
+
+function renderActivity(logEntries) {
+  if (!activityLogEl) {
+    return;
+  }
+
+  if (!logEntries || !logEntries.length) {
+    activityLogEl.innerHTML = "<p class=\"muted\">No recent sync activity.</p>";
+    return;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "log-list";
+
+  logEntries.forEach((entry) => {
+    const summary = summariseLogEntry(entry);
+    const item = document.createElement("li");
+    item.className = ["log-entry", summary.className].filter(Boolean).join(" ");
+
+    const meta = document.createElement("div");
+    meta.className = "log-meta";
+    const statusText = (entry.status || "unknown").toUpperCase();
+    meta.textContent = `${summary.timestamp} • ${entry.sync_id} (${statusText})`;
+
+    const message = document.createElement("div");
+    message.className = "log-message";
+    message.textContent = summary.message;
+
+    item.appendChild(meta);
+    item.appendChild(message);
+    list.appendChild(item);
+  });
+
+  activityLogEl.innerHTML = "";
+  activityLogEl.appendChild(list);
+}
+
+function setSyncsTab(tab) {
+  if (!syncsTabButtons.length || !syncsTabPanes.length) {
+    return;
+  }
+
+  state.view.syncsTab = tab;
+
+  syncsTabButtons.forEach((button) => {
+    const isActive = button.dataset.syncsTab === tab;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+
+  syncsTabPanes.forEach((pane) => {
+    const isActive = pane.dataset.syncsTabContent === tab;
+    pane.classList.toggle("hidden", !isActive);
+  });
+
+  if (syncsPanelActions) {
+    syncsPanelActions.classList.toggle("hidden", tab !== "syncs");
+  }
+
+  if (tab === "activity") {
+    renderActivity(state.logs);
+  }
 }
 
 function jobStatusDescriptor(job) {
@@ -406,11 +532,14 @@ function showToast(message, kind = "success", timeout = 4000) {
 
 async function refreshData(manual = false) {
   try {
-    const [syncPayload, statusPayload] = await Promise.all([
+    const [syncPayload, statusPayload, logsPayload] = await Promise.all([
       fetchJson("/syncs"),
       fetchJson("/status"),
+      fetchJson(`/logs/recent?limit=${SUPERVISOR_LOG_LIMIT}`),
     ]);
+    state.logs = logsPayload?.entries || [];
     renderSupervisor(statusPayload);
+    renderActivity(state.logs);
     renderSyncs(syncPayload?.syncs || [], statusPayload?.jobs || []);
     const now = new Date();
     lastUpdatedEl.textContent = `Updated ${now.toLocaleTimeString()}`;
@@ -418,7 +547,9 @@ async function refreshData(manual = false) {
       showToast("Dashboard updated", "success", 2500);
     }
   } catch (error) {
+    state.logs = [];
     renderSupervisor(null);
+    renderActivity(state.logs);
     syncListEl.innerHTML = `<p class=\"error-text\">${error.message}</p>`;
     showToast(error.message, "error", 5000);
   }
@@ -489,6 +620,87 @@ async function deleteAsset(name) {
   } catch (error) {
     showToast(`Delete failed: ${error.message}`, "error", 6000);
   }
+}
+
+function isFolderCollapsed(path) {
+  if (!path) {
+    return false;
+  }
+  if (!(path in state.assetFolders)) {
+    state.assetFolders[path] = true;
+  }
+  return state.assetFolders[path];
+}
+
+function toggleFolder(path) {
+  if (!path) {
+    return;
+  }
+  const collapsed = isFolderCollapsed(path);
+  state.assetFolders[path] = !collapsed;
+}
+
+function buildAssetTree(assets) {
+  const root = [];
+  const nodes = new Map([["", { children: root }]]);
+  const folderPaths = new Set();
+
+  const sorted = [...assets].sort((a, b) => {
+    const aPath = a.path || a.name || "";
+    const bPath = b.path || b.name || "";
+    return aPath.localeCompare(bPath);
+  });
+
+  sorted.forEach((asset) => {
+    const rawPath = asset.path || asset.name;
+    if (!rawPath) {
+      return;
+    }
+
+    const parts = rawPath.split("/");
+    let parentPath = "";
+    let parentNode = nodes.get("");
+
+    parts.forEach((segment, index) => {
+      const currentPath = parentPath ? `${parentPath}/${segment}` : segment;
+      const isLast = index === parts.length - 1;
+      let node = nodes.get(currentPath);
+
+      if (!node) {
+        node = {
+          name: segment,
+          path: currentPath,
+          isDir: !isLast || Boolean(asset.is_dir),
+          asset: null,
+          children: [],
+        };
+        parentNode.children.push(node);
+        if (node.isDir) {
+          nodes.set(currentPath, node);
+          folderPaths.add(currentPath);
+        }
+      }
+
+      if (isLast) {
+        node.isDir = Boolean(asset.is_dir);
+        node.asset = asset;
+        if (node.isDir) {
+          node.children = node.children || [];
+          nodes.set(currentPath, node);
+          folderPaths.add(currentPath);
+        } else {
+          node.children = undefined;
+        }
+      }
+
+      if (node.isDir) {
+        parentPath = currentPath;
+        parentNode = node;
+      }
+    });
+  });
+
+  return { tree: root, folders: folderPaths };
 }
 
 function formatScheduleSummary(schedule) {
@@ -606,26 +818,68 @@ function renderAssetTable() {
 
   assetsTable.classList.remove("hidden");
   assetsEmptyState.classList.add("hidden");
-  assetsTableBody.innerHTML = "";
+  const { tree, folders } = buildAssetTree(state.assets);
 
-  state.assets.forEach((asset) => {
+  Object.keys(state.assetFolders).forEach((path) => {
+    if (!folders.has(path)) {
+      delete state.assetFolders[path];
+    }
+  });
+
+  assetsTableBody.innerHTML = "";
+  renderAssetNodes(tree, 0);
+}
+
+function renderAssetNodes(nodes, depth) {
+  const items = [...nodes].sort((a, b) => {
+    if (a.isDir !== b.isDir) {
+      return a.isDir ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  items.forEach((node) => {
+    const asset = node.asset || {
+      name: node.name,
+      path: node.path,
+      is_dir: node.isDir,
+      size_bytes: 0,
+      modified_at: null,
+    };
+
     const row = document.createElement("tr");
+    row.dataset.assetPath = asset.path;
+    row.dataset.depth = String(depth);
 
     const nameCell = document.createElement("td");
-    const displayPath = asset.path || asset.name;
-    if (asset.is_dir) {
-      nameCell.textContent = `${displayPath}/`;
-      nameCell.classList.add("muted");
+    nameCell.style.paddingLeft = `${depth * 18}px`;
+
+    if (node.isDir) {
+      const collapsed = isFolderCollapsed(node.path);
+      nameCell.classList.add("asset-folder-name");
+
+      const toggleButton = document.createElement("button");
+      toggleButton.type = "button";
+      toggleButton.className = "asset-toggle";
+      toggleButton.dataset.assetToggle = node.path;
+      toggleButton.textContent = collapsed ? ">" : "v";
+      nameCell.appendChild(toggleButton);
+
+      const label = document.createElement("span");
+      label.textContent = ` ${asset.name || node.name}/`;
+      nameCell.appendChild(label);
     } else if (asset.url) {
       const link = document.createElement("a");
       link.href = asset.url;
       link.target = "_blank";
       link.rel = "noopener";
-      link.textContent = displayPath;
+      link.textContent = asset.name || asset.path;
+      link.title = asset.path;
       nameCell.appendChild(link);
     } else {
-      nameCell.textContent = displayPath;
+      nameCell.textContent = asset.name || asset.path;
     }
+
     row.appendChild(nameCell);
 
     const sizeCell = document.createElement("td");
@@ -638,10 +892,14 @@ function renderAssetTable() {
 
     const actionsCell = document.createElement("td");
     actionsCell.className = "actions-col";
-    const group = document.createElement("div");
-    group.className = "action-group";
 
-    if (!asset.is_dir) {
+    if (asset.is_dir) {
+      actionsCell.textContent = "—";
+      actionsCell.classList.add("muted");
+    } else {
+      const group = document.createElement("div");
+      group.className = "action-group";
+
       const copyButton = document.createElement("button");
       copyButton.textContent = "Copy path";
       copyButton.dataset.action = "copy";
@@ -660,12 +918,16 @@ function renderAssetTable() {
       deleteButton.dataset.action = "delete";
       deleteButton.dataset.assetPath = asset.path;
       group.appendChild(deleteButton);
+
+      actionsCell.appendChild(group);
     }
 
-    actionsCell.appendChild(group);
     row.appendChild(actionsCell);
-
     assetsTableBody.appendChild(row);
+
+    if (node.isDir && node.children && node.children.length && !isFolderCollapsed(node.path)) {
+      renderAssetNodes(node.children, depth + 1);
+    }
   });
 }
 
@@ -952,6 +1214,16 @@ function applyTemplate() {
 }
 
 function bindEventListeners() {
+  if (syncsTabButtons.length) {
+    syncsTabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.syncsTab || "syncs";
+        setSyncsTab(target);
+      });
+    });
+    setSyncsTab(state.view.syncsTab);
+  }
+
   refreshButton.addEventListener("click", () => {
     refreshData(true);
   });
@@ -987,7 +1259,17 @@ function bindEventListeners() {
     });
 
     assetsTableBody.addEventListener("click", (event) => {
-      const button = event.target.closest("button");
+      const toggleButton = event.target.closest("button[data-asset-toggle]");
+      if (toggleButton) {
+        const folderPath = toggleButton.dataset.assetToggle;
+        if (folderPath) {
+          toggleFolder(folderPath);
+          renderAssetTable();
+        }
+        return;
+      }
+
+      const button = event.target.closest("button[data-action]");
       if (!button) {
         return;
       }

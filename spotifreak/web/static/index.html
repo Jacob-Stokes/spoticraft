@@ -28,21 +28,36 @@
           <h2 id="supervisor-heading">Supervisor</h2>
           <span id="last-updated" class="meta"></span>
         </div>
-        <div id="supervisor-status" class="panel-body">
+        <div class="panel-body" id="supervisor-status">
           <p class="muted">Loading supervisor status…</p>
         </div>
       </section>
 
       <section class="panel" aria-labelledby="syncs-heading">
-        <div class="panel-heading">
-          <h2 id="syncs-heading">Scheduled Syncs</h2>
-          <div class="panel-actions">
+        <div class="panel-heading with-tabs">
+          <div class="panel-heading-main">
+            <h2 id="syncs-heading">Scheduled Syncs</h2>
+            <div class="panel-tabs" role="tablist">
+              <button type="button" class="tab-button active" data-syncs-tab="syncs" aria-selected="true">Syncs</button>
+              <button type="button" class="tab-button" data-syncs-tab="activity" aria-selected="false">Activity</button>
+            </div>
+          </div>
+          <div class="panel-actions" data-syncs-actions>
             <label class="inline">History tail
               <input id="history-tail" type="number" min="1" max="100" value="5" />
             </label>
           </div>
         </div>
-        <div id="sync-list" class="sync-grid"></div>
+        <div class="panel-body">
+          <div class="tab-pane" data-syncs-tab-content="syncs">
+            <div id="sync-list" class="sync-grid"></div>
+          </div>
+          <div class="tab-pane hidden" data-syncs-tab-content="activity">
+            <div id="sync-activity-log" class="log-feed">
+              <p class="muted">Loading recent activity…</p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="panel" aria-labelledby="configs-heading">

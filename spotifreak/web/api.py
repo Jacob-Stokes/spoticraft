@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 import mimetypes
@@ -206,6 +206,45 @@ def sync_history(sync_id: str, tail: int = Query(default=10, ge=1), config_dir: 
     if not history:
         return {"history": []}
     return {"history": history[-tail:]}
+
+
+def _collect_recent_logs(context, limit: int) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    for sync in context.syncs:
+        state_path = state_path_for_sync(context.paths, context.global_config, sync)
+        state = load_state(state_path)
+        history = state.data.get("run_history", [])
+        for record in history:
+            entry = {
+                "sync_id": sync.id,
+                "sync_type": sync.type,
+                "status": record.get("status"),
+                "started_at": record.get("started_at"),
+                "completed_at": record.get("completed_at"),
+                "error": record.get("error"),
+                "details": record.get("details", {}),
+            }
+            entries.append(entry)
+
+    def _sort_key(item: Dict[str, Any]) -> str:
+        for key in ("completed_at", "started_at"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    entries.sort(key=_sort_key, reverse=True)
+    return entries[:limit]
+
+
+@app.get("/logs/recent")
+def recent_logs(
+    config_dir: Optional[str] = Query(default=None),
+    limit: int = Query(default=15, ge=1, le=100),
+):
+    context = _load_app_context(config_dir)
+    entries = _collect_recent_logs(context, limit)
+    return {"entries": entries}
 
 
 def _modified_time(path: Path) -> Optional[str]:
@@ -453,13 +492,13 @@ def list_assets(config_dir: Optional[str] = Query(default=None)):
     return {"assets": assets}
 
 
-@app.get("/config/assets/{asset_name}")
-def get_asset(asset_name: str, config_dir: Optional[str] = Query(default=None)):
+@app.get("/config/assets/{asset_path:path}")
+def get_asset(asset_path: str, config_dir: Optional[str] = Query(default=None)):
     context = _load_app_context(config_dir)
-    relative_path = _sanitize_asset_path(asset_name)
+    relative_path = _sanitize_asset_path(asset_path)
     path = context.paths.assets_dir / relative_path
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Asset not found: {asset_name}")
+        raise HTTPException(status_code=404, detail=f"Asset not found: {asset_path}")
     mime_type, _ = mimetypes.guess_type(path.name)
     return FileResponse(path, media_type=mime_type or "application/octet-stream", filename=path.name)
 
@@ -499,13 +538,13 @@ async def upload_asset(
     return _asset_metadata(context.paths.assets_dir, target_path)
 
 
-@app.delete("/config/assets/{asset_name}", status_code=204)
-def delete_asset(asset_name: str, config_dir: Optional[str] = Query(default=None)):
+@app.delete("/config/assets/{asset_path:path}", status_code=204)
+def delete_asset(asset_path: str, config_dir: Optional[str] = Query(default=None)):
     context = _load_app_context(config_dir)
-    relative_path = _sanitize_asset_path(asset_name)
+    relative_path = _sanitize_asset_path(asset_path)
     path = context.paths.assets_dir / relative_path
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Asset not found: {asset_name}")
+        raise HTTPException(status_code=404, detail=f"Asset not found: {asset_path}")
     if path.is_dir():
         raise HTTPException(status_code=400, detail="Directory deletion is not supported")
     try:

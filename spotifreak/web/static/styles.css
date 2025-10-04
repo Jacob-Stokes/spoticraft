@@ -159,6 +159,46 @@ button[disabled] {
   margin-bottom: 1rem;
 }
 
+.panel-heading.with-tabs {
+  flex-wrap: wrap;
+  row-gap: 0.75rem;
+}
+
+.panel-heading-main {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.panel-tabs {
+  display: inline-flex;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: rgba(34, 102, 255, 0.08);
+  border: 1px solid rgba(34, 102, 255, 0.18);
+}
+
+.panel-tabs .tab-button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.panel-tabs .tab-button:hover {
+  color: var(--accent);
+}
+
+.panel-tabs .tab-button.active {
+  background: var(--button-bg);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(34, 102, 255, 0.15);
+}
+
 .panel-heading h2 {
   margin: 0;
   font-size: 1.2rem;
@@ -357,6 +397,74 @@ button[disabled] {
 .action-group {
   display: flex;
   gap: 0.4rem;
+}
+
+.asset-folder-name {
+  font-weight: 600;
+}
+
+.asset-toggle {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.1rem 0.35rem 0.1rem 0;
+  margin-right: 0.35rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.asset-toggle:hover {
+  color: var(--accent);
+}
+
+.log-feed {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tab-pane.hidden {
+  display: none;
+}
+
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.log-entry {
+  display: grid;
+  gap: 0.15rem;
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+}
+
+.log-entry .log-meta {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.log-entry .log-message {
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.log-entry.success {
+  border-color: rgba(15, 157, 88, 0.4);
+}
+
+.log-entry.failed {
+  border-color: rgba(215, 38, 61, 0.5);
+}
+
+.log-entry.warn {
+  border-color: rgba(246, 195, 64, 0.5);
 }
 
 .hidden {
