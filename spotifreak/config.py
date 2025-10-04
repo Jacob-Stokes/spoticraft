@@ -1,4 +1,4 @@
-"""Configuration models and helpers for Spoticraft."""
+"""Configuration models and helpers for Spotifreak."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class ConfigPaths:
     def default(cls) -> "ConfigPaths":
         """Return default locations under the user's home directory."""
 
-        base = Path.home() / ".spoticraft"
+        base = Path.home() / ".spotifreak"
         return cls.from_base_dir(base)
 
     @classmethod

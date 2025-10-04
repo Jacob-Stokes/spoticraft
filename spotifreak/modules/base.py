@@ -1,4 +1,4 @@
-"""Base interfaces for Spoticraft sync modules."""
+"""Base interfaces for Spotifreak sync modules."""
 
 from __future__ import annotations
 
@@ -7,11 +7,12 @@ from typing import Any, Dict, Optional, Protocol, TYPE_CHECKING
 
 from structlog.stdlib import BoundLogger
 
-from ..config import SyncConfig
+from ..config import SyncConfig, ConfigPaths
 
 if TYPE_CHECKING:  # pragma: no cover - typing aid
     from ..services.spotify_client import SpotifyService
     from ..state import SyncState
+    from ..config import GlobalConfig
 
 
 @dataclass
@@ -21,6 +22,8 @@ class SyncContext:
     logger: BoundLogger
     spotify: Optional["SpotifyService"] = None
     state: Optional["SyncState"] = None
+    global_config: Optional["GlobalConfig"] = None
+    paths: Optional[ConfigPaths] = None
 
 
 class SyncModule(Protocol):

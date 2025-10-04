@@ -1,8 +1,14 @@
 old-spotify-sync/
 PLAN.MD
 TASKLIST.MD
+COMMANDS.MD
+HANDOVER.MD
 .venv/
-spoticraft.egg-info/
-.spoticraft-sample/
+spotifreak.egg-info/
 *.log
 new-repo/
+.claude/
+.spotifreak-jacob/
+docker/logs/
+docker/state/
+docker/config/

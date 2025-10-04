@@ -1,4 +1,4 @@
-"""Service-layer helpers for Spoticraft."""
+"""Service-layer helpers for Spotifreak."""
 
 from .spotify_client import SpotifyService
 

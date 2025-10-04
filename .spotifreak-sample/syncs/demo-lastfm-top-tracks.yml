@@ -1,0 +1,11 @@
+id: demo-lastfm-top-tracks
+type: lastfm_top_tracks
+schedule:
+  interval: 1h
+options:
+  playlist:
+    kind: playlist_name
+    name: Last.fm Top Tracks (Demo)
+  limit: 10
+  period: 7day
+  clear_before_add: true

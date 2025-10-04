@@ -1,4 +1,4 @@
-"""Authentication helpers for Spoticraft."""
+"""Authentication helpers for Spotifreak."""
 
 from .spotify import SpotifyClientFactory, SpotifyClientSettings
 

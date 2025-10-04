@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "updated_at": "2025-10-04T12:49:31.820598+00:00",
+  "last_processed_track_id": "0Z7GNrvgEj3iiIxxPtRwIe",
+  "last_processed_at": "2025-10-04T00:39:17.675223+00:00",
+  "run_history": [
+    {
+      "id": "2025-10-04T12:25:23.321811+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:25:23.321811+00:00",
+      "completed_at": "2025-10-04T12:26:34.565014+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:26:43.317232+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:26:43.317232+00:00",
+      "completed_at": "2025-10-04T12:27:51.193956+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:27:53.320071+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:27:53.320071+00:00",
+      "completed_at": "2025-10-04T12:29:02.071863+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:29:03.314297+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:29:03.314297+00:00",
+      "completed_at": "2025-10-04T12:30:14.028640+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:30:23.317624+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:30:23.317624+00:00",
+      "completed_at": "2025-10-04T12:31:32.725358+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:31:33.319992+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:31:33.319992+00:00",
+      "completed_at": "2025-10-04T12:32:45.439933+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:32:53.310362+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:32:53.310362+00:00",
+      "completed_at": "2025-10-04T12:34:02.361121+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:34:03.317781+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:34:03.317781+00:00",
+      "completed_at": "2025-10-04T12:35:15.488737+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:35:23.321105+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:35:23.321105+00:00",
+      "completed_at": "2025-10-04T12:36:32.357400+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:36:33.315412+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:36:33.315412+00:00",
+      "completed_at": "2025-10-04T12:37:41.916415+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:37:43.316213+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:37:43.316213+00:00",
+      "completed_at": "2025-10-04T12:38:51.518822+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:38:53.317326+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:38:53.317326+00:00",
+      "completed_at": "2025-10-04T12:39:58.761247+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:40:03.315279+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:40:03.315279+00:00",
+      "completed_at": "2025-10-04T12:41:12.148692+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:41:13.309041+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:41:13.309041+00:00",
+      "completed_at": "2025-10-04T12:42:23.556508+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:42:33.320097+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:42:33.320097+00:00",
+      "completed_at": "2025-10-04T12:43:41.739875+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:43:43.323163+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:43:43.323163+00:00",
+      "completed_at": "2025-10-04T12:44:50.217404+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:44:53.319288+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:44:53.319288+00:00",
+      "completed_at": "2025-10-04T12:46:01.773287+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:46:03.319212+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:46:03.319212+00:00",
+      "completed_at": "2025-10-04T12:47:11.904814+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:47:13.320282+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:47:13.320282+00:00",
+      "completed_at": "2025-10-04T12:48:22.671293+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    },
+    {
+      "id": "2025-10-04T12:48:23.319731+00:00",
+      "status": "success",
+      "started_at": "2025-10-04T12:48:23.319731+00:00",
+      "completed_at": "2025-10-04T12:49:31.820589+00:00",
+      "details": {
+        "mode": "supervisor",
+        "status": "up_to_date",
+        "processed": 0,
+        "targets": 2,
+        "total_source": 6369,
+        "added": 0,
+        "reason": "cursor_up_to_date"
+      }
+    }
+  ]
+}

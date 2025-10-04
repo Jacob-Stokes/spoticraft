@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from ..services.spotify_client import SpotifyService
+from ..services.spotify_client import SpotifyRateLimitError, SpotifyService
 from .base import SyncContext, SyncModule
 
 
@@ -69,6 +69,10 @@ class PlaylistMirrorModule(SyncModule):
 
         try:
             source_track_ids = self._collect_source_tracks(service, context)
+        except SpotifyRateLimitError as exc:
+            logger.warning("playlist_mirror.rate_limited", phase="source", retry_after=exc.retry_after)
+            self._update_summary(status="rate_limited", reason="source_rate_limited", retry_after=exc.retry_after)
+            return
         except Exception as exc:  # pragma: no cover - depends on API behaviour
             logger.exception("playlist_mirror.source_failed", error=str(exc))
             self._update_summary(status="failed", reason="source_failed")
@@ -85,6 +89,10 @@ class PlaylistMirrorModule(SyncModule):
 
         try:
             targets = self._resolve_targets(service)
+        except SpotifyRateLimitError as exc:
+            logger.warning("playlist_mirror.rate_limited", phase="target_resolve", retry_after=exc.retry_after)
+            self._update_summary(status="rate_limited", reason="target_resolution_rate_limited", retry_after=exc.retry_after)
+            return
         except Exception as exc:
             logger.exception("playlist_mirror.target_resolution_failed", error=str(exc))
             self._update_summary(status="failed", reason="target_resolution_failed")
@@ -95,8 +103,17 @@ class PlaylistMirrorModule(SyncModule):
             logger.info("playlist_mirror.no_new_tracks", reason="cursor_up_to_date")
             self._update_summary(status="up_to_date", reason="cursor_up_to_date")
         else:
+            rate_limited = False
             for target in targets:
-                self._sync_target(service, target, tracks_to_process, source_track_ids, context)
+                try:
+                    self._sync_target(service, target, tracks_to_process, source_track_ids, context)
+                except SpotifyRateLimitError as exc:
+                    logger.warning("playlist_mirror.rate_limited", phase="target_sync", target_id=target.id, retry_after=exc.retry_after)
+                    self._update_summary(status="rate_limited", reason="target_sync_rate_limited", retry_after=exc.retry_after)
+                    rate_limited = True
+                    break
+            if rate_limited:
+                return
             added_total = int(self.last_run_summary.get("added", 0))
             if added_total > 0:
                 self._update_summary(status="success")
@@ -208,10 +225,15 @@ class PlaylistMirrorModule(SyncModule):
             return
 
         tracks_to_add = list(tracks_to_process)
-        if self.options.deduplicate:
+        state_cursor = context.state.last_processed_track_id if context.state else None
+        should_deduplicate = self.options.deduplicate and state_cursor is None
+
+        if should_deduplicate:
             existing = service.get_playlist_tracks(target.id)
             existing_set = set(existing)
             tracks_to_add = [tid for tid in tracks_to_add if tid not in existing_set]
+        elif self.options.deduplicate:
+            logger.debug("playlist_mirror.deduplicate_skipped", reason="cursor_active")
 
         if not tracks_to_add:
             logger.info("playlist_mirror.target_skipped", reason="no_new_tracks")

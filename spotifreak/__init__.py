@@ -1,4 +1,4 @@
-"""Top-level package for Spoticraft."""
+"""Top-level package for Spotifreak."""
 
 __all__ = [
     "__version__",

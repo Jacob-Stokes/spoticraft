@@ -1,0 +1,44 @@
+id: demo-playlist-presentation
+type: playlist_presentation
+schedule:
+  interval: 1m
+options:
+  playlist:
+    kind: playlist_name
+    name: Presentation Demo
+  phases:
+    mode: sunrise_sunset
+    sunrise:
+      latitude: 51.5074
+      longitude: -0.1278
+      morning_duration_hours: 3
+      evening_duration_hours: 2
+      night_offset_hours: 1
+  cover:
+    enabled: true
+    selection: sequential
+    assets:
+      morning:
+        - assets/morning.jpg
+      day:
+        - assets/day.jpg
+      evening:
+        - assets/evening.jpg
+      night:
+        - assets/night.jpg
+  title:
+    enabled: true
+    selection: random
+    assets:
+      default:
+        - Morning Flow
+        - Afternoon Pulse
+        - Sunset Hues
+        - Midnight Echoes
+  description:
+    enabled: true
+    selection: sequential
+    use_dynamic: true
+    dynamic_templates:
+      - Refreshed at {time} on {weekday}
+      - Curated vibes for {weekday} nights

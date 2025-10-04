@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spoticraft"
+name = "spotifreak"
 version = "0.1.0"
 description = "Modular Spotify sync supervisor and CLI"
 readme = "README.MD"
@@ -21,15 +21,21 @@ dependencies = [
   "watchfiles>=0.21,<0.22",
   "pyyaml>=6.0,<7",
   "spotipy>=2.23,<3",
+  "requests>=2.32,<3",
 ]
 
 [project.scripts]
-spoticraft = "spoticraft.cli:main"
+spotifreak = "spotifreak.cli:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=7.4,<8",
   "ruff>=0.3,<0.4",
+]
+web = [
+  "fastapi>=0.111,<0.112",
+  "uvicorn>=0.30,<0.31",
+  "aiofiles>=23.2,<24",
 ]
 
 [tool.ruff]
@@ -39,4 +45,10 @@ line-length = 100
 addopts = "-qs"
 
 [tool.setuptools.packages.find]
-include = ["spoticraft", "spoticraft.*"]
+include = ["spotifreak", "spotifreak.*"]
+
+[tool.setuptools.package-data]
+"spotifreak.web" = [
+  "static/*",
+  "static/**/*",
+]

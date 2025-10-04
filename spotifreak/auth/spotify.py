@@ -58,4 +58,10 @@ class SpotifyClientFactory:
             scope=self.settings.scope,
             cache_path=str(self.settings.cache_path) if self.settings.cache_path else None,
         )
-        return spotipy.Spotify(auth_manager=oauth)
+        return spotipy.Spotify(
+            auth_manager=oauth,
+            requests_timeout=10,
+            retries=0,
+            status_retries=0,
+            backoff_factor=0.0,
+        )

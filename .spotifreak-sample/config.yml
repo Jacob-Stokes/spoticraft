@@ -1,0 +1,23 @@
+spotify:
+  client_id: 1ac3defbf6f1439fb933f7709a94f615
+  client_secret: f2b277d824d34610bae8107e04662f76
+  redirect_uri: http://localhost:8888/callback
+  scopes:
+  - user-library-read
+  - playlist-read-private
+  - playlist-modify-private
+  - playlist-modify-public
+runtime:
+  timezone: UTC
+  storage_dir: /state
+  log_level: INFO
+  default_retry:
+    attempts: 3
+    backoff_seconds: 30
+supervisor:
+  ipc_socket: /ipc/ipc.sock
+  hot_reload: true
+lastfm:
+  api_key: 3538bbf1b482b1df079735c30248650c
+  api_secret: 988fb53f91f03b3787bb4207452663fd
+  username: jthstokes

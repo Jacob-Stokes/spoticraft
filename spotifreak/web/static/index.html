@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spotifreak Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script type="module" src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Spotifreak Dashboard</h1>
+      <button id="refresh-button" class="secondary">Refresh</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel" aria-labelledby="supervisor-heading">
+        <div class="panel-heading">
+          <h2 id="supervisor-heading">Supervisor</h2>
+          <span id="last-updated" class="meta"></span>
+        </div>
+        <div id="supervisor-status" class="panel-body">
+          <p class="muted">Loading supervisor status…</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="syncs-heading">
+        <div class="panel-heading">
+          <h2 id="syncs-heading">Syncs</h2>
+          <div class="panel-actions">
+            <label class="inline">History tail
+              <input id="history-tail" type="number" min="1" max="100" value="5" />
+            </label>
+          </div>
+        </div>
+        <div id="sync-list" class="sync-grid"></div>
+      </section>
+    </main>
+
+    <section id="notifications" aria-live="polite"></section>
+
+    <template id="sync-card-template">
+      <article class="sync-card">
+        <header>
+          <div>
+            <h3 class="sync-name"></h3>
+            <p class="sync-type"></p>
+          </div>
+          <span class="badge"></span>
+        </header>
+        <dl class="sync-details">
+          <div>
+            <dt>Schedule</dt>
+            <dd class="sync-schedule"></dd>
+          </div>
+          <div>
+            <dt>Next run</dt>
+            <dd class="sync-next-run"></dd>
+          </div>
+          <div>
+            <dt>Options</dt>
+            <dd class="sync-options"></dd>
+          </div>
+        </dl>
+        <div class="sync-actions">
+          <button data-command="start">Run now</button>
+          <button data-command="pause">Pause</button>
+          <button data-command="resume">Resume</button>
+          <button data-command="delete" class="danger">Remove</button>
+        </div>
+        <details class="sync-history">
+          <summary>History</summary>
+          <ol></ol>
+        </details>
+      </article>
+    </template>
+  </body>
+</html>

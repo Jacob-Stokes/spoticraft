@@ -1,4 +1,4 @@
-"""Shared application context for Spoticraft CLI commands."""
+"""Shared application context for Spotifreak CLI commands."""
 
 from __future__ import annotations
 

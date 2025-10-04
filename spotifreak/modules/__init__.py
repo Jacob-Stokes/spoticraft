@@ -1,4 +1,4 @@
-"""Sync module interfaces and registry for Spoticraft."""
+"""Sync module interfaces and registry for Spotifreak."""
 
 from __future__ import annotations
 
@@ -6,6 +6,9 @@ from typing import Dict, Iterable
 
 from .base import SyncContext, SyncModule, SyncModuleFactory
 from .playlist_mirror import PlaylistMirrorModule
+from .playlist_retention import PlaylistRetentionModule
+from .lastfm_top_tracks import LastFmTopTracksModule
+from .playlist_presentation import PlaylistPresentationModule
 
 __all__ = [
     "SyncContext",
@@ -40,3 +43,6 @@ class ModuleRegistry:
 # Singleton registry used across the app for now.
 default_registry = ModuleRegistry()
 default_registry.register("playlist_mirror", PlaylistMirrorModule)
+default_registry.register("playlist_retention", PlaylistRetentionModule)
+default_registry.register("lastfm_top_tracks", LastFmTopTracksModule)
+default_registry.register("playlist_presentation", PlaylistPresentationModule)

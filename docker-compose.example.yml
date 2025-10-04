@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  supervisor:
+    image: spotifreak:latest
+    build: .
+    restart: unless-stopped
+    environment:
+      SPOTIFREAK_CONFIG_DIR: /config
+    volumes:
+      - ./docker/config:/config
+      - ./docker/state:/state
+      - ./docker/logs:/logs
+      - ipc-socket:/ipc
+
+  api:
+    image: spotifreak:latest
+    build: .
+    entrypoint: ["python"]
+    command: ["-m", "uvicorn", "spotifreak.web.api:app", "--host", "0.0.0.0", "--port", "8080"]
+    restart: unless-stopped
+    environment:
+      SPOTIFREAK_CONFIG_DIR: /config
+    depends_on:
+      - supervisor
+    volumes:
+      - ./docker/config:/config
+      - ./docker/state:/state
+      - ipc-socket:/ipc
+    ports:
+      - "8080:8080"
+
+volumes:
+  ipc-socket:

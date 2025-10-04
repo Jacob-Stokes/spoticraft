@@ -1,4 +1,4 @@
-"""Command-line entry point for Spoticraft."""
+"""Command-line entry point for Spotifreak."""
 
 from __future__ import annotations
 
@@ -17,13 +17,39 @@ from .auth import SpotifyClientFactory
 from .services import SpotifyService
 from .state import load_state, state_path_for_sync
 from .logging import configure_logging, get_logger
+from .ipc import send_ipc_command, IPCError
 from rich.console import Console
 from rich.table import Table
 
-app = typer.Typer(help="Spoticraft supervisor and CLI controller.")
+app = typer.Typer(help="Spotifreak supervisor and CLI controller.")
 state_app = typer.Typer(help="Inspect and modify sync state.")
 app.add_typer(state_app, name="state")
 console = Console()
+
+
+def _determine_default_log_level(config_dir: Optional[Path]) -> str:
+    if config_dir is None:
+        paths = ConfigPaths.default()
+    else:
+        paths = ConfigPaths.from_base_dir(config_dir)
+
+    config_path = paths.global_config
+    if not config_path.exists():
+        return "INFO"
+
+    try:
+        import yaml  # local import to avoid hard dependency before install
+
+        with config_path.open("r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+        runtime = payload.get("runtime", {})
+        log_level = runtime.get("log_level")
+        if isinstance(log_level, str) and log_level.strip():
+            return log_level.upper()
+    except Exception:
+        return "INFO"
+
+    return "INFO"
 
 
 def _bootstrap_logging(
@@ -31,6 +57,7 @@ def _bootstrap_logging(
     verbose: bool,
     json_logs: bool,
     log_file: Optional[Path],
+    config_dir: Optional[Path],
 ) -> None:
     """Initialise logging once per CLI invocation."""
 
@@ -40,9 +67,13 @@ def _bootstrap_logging(
     if ctx.obj.get("_logging_configured"):
         return
 
-    level = "DEBUG" if verbose else "INFO"
+    level = "DEBUG" if verbose else _determine_default_log_level(config_dir)
     configure_logging(level=level, json_output=json_logs, log_file=log_file)
-    ctx.obj["logger"] = get_logger("spoticraft.cli")
+    ctx.obj["logger"] = get_logger("spotifreak.cli")
+    ctx.obj["log_level"] = level
+    ctx.obj["json_logs"] = json_logs
+    ctx.obj["log_file_path"] = log_file
+    ctx.obj["force_log_level"] = verbose
     ctx.obj["_logging_configured"] = True
 
 
@@ -61,16 +92,32 @@ def cli(  # noqa: D401 - Typer generates help text.
         help="Optional file to append structured logs to.",
     ),
 ) -> None:
-    """Spoticraft command group."""
+    """Spotifreak command group."""
 
-    _bootstrap_logging(ctx, verbose, json_logs, log_file)
+    _bootstrap_logging(ctx, verbose, json_logs, log_file, None)
 
     if ctx.invoked_subcommand is None:
         typer.echo(app.get_help(ctx))
 
 
 def _logger(ctx: typer.Context):
-    return ctx.obj.get("logger", get_logger("spoticraft.cli"))
+    return ctx.obj.get("logger", get_logger("spotifreak.cli"))
+
+
+def _maybe_update_log_level(ctx: typer.Context, config_dir: Optional[Path]) -> None:
+    if ctx.obj.get("force_log_level"):
+        return
+
+    desired = _determine_default_log_level(config_dir)
+    current = ctx.obj.get("log_level")
+    if desired != current:
+        configure_logging(
+            level=desired,
+            json_output=ctx.obj.get("json_logs", False),
+            log_file=ctx.obj.get("log_file_path"),
+        )
+        ctx.obj["logger"] = get_logger("spotifreak.cli")
+        ctx.obj["log_level"] = desired
 
 
 def parse_track_id(value: str) -> str:
@@ -83,9 +130,6 @@ def parse_track_id(value: str) -> str:
     if not value or len(value) != 22:
         raise typer.BadParameter("Provide a valid Spotify track URL or ID (22 characters).")
     return value
-
-
-@app.command()
 def init(
     ctx: typer.Context,
     config_dir: Optional[Path] = typer.Option(
@@ -95,7 +139,7 @@ def init(
         file_okay=False,
         writable=True,
         resolve_path=True,
-        help="Base directory for config files (defaults to ~/.spoticraft).",
+        help="Base directory for config files (defaults to ~/.spotifreak).",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing config.yml"),
 ) -> None:
@@ -148,12 +192,14 @@ def serve(
         dir_okay=True,
         file_okay=False,
         resolve_path=True,
-        help="Base directory for config files (defaults to ~/.spoticraft).",
+        help="Base directory for config files (defaults to ~/.spotifreak).",
     ),
 ) -> None:
     """Start the background supervisor."""
 
     log = _logger(ctx)
+
+    _maybe_update_log_level(ctx, config_dir)
 
     try:
         paths = determine_paths(config_dir)
@@ -198,12 +244,14 @@ def list_syncs(
         dir_okay=True,
         file_okay=False,
         resolve_path=True,
-        help="Base directory for config files (defaults to ~/.spoticraft).",
+        help="Base directory for config files (defaults to ~/.spotifreak).",
     ),
 ) -> None:
     """List configured syncs and their status."""
 
     log = _logger(ctx)
+
+    _maybe_update_log_level(ctx, config_dir)
 
     try:
         paths = determine_paths(config_dir)
@@ -219,7 +267,7 @@ def list_syncs(
         log.info("list.completed", sync_count=0)
         return
 
-    table = Table(title="Configured Spoticraft Syncs")
+    table = Table(title="Configured Spotifreak Syncs")
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Type")
     table.add_column("Schedule")
@@ -233,6 +281,63 @@ def list_syncs(
 
     console.print(table)
     log.info("list.completed", sync_count=len(context.syncs))
+
+
+@app.command()
+def status(
+    ctx: typer.Context,
+    config_dir: Optional[Path] = typer.Option(
+        None,
+        "--config-dir",
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+        help="Base directory for config files (defaults to ~/.spotifreak).",
+    ),
+) -> None:
+    """Show supervisor job status."""
+
+    log = _logger(ctx)
+    _maybe_update_log_level(ctx, config_dir)
+
+    try:
+        paths = determine_paths(config_dir)
+        context = load_context(paths)
+    except ConfigError as exc:
+        log.error("status.failed", error=str(exc))
+        typer.echo(f"Error loading configuration: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    socket_path = Path(context.global_config.supervisor.ipc_socket).expanduser()
+    try:
+        response = send_ipc_command(socket_path, {"command": "status"})
+    except IPCError as exc:
+        log.error("status.ipc_failed", error=str(exc))
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    if response.get("status") != "ok":
+        typer.echo(f"Supervisor error: {response.get('message')}")
+        raise typer.Exit(code=1)
+
+    jobs = response.get("jobs", [])
+    if not jobs:
+        typer.echo("No scheduled jobs.")
+        return
+
+    table = Table(title="Supervisor Jobs")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Next Run")
+    table.add_column("Paused")
+    table.add_column("Missed")
+    for job in jobs:
+        table.add_row(
+            str(job.get("id")),
+            job.get("next_run") or "-",
+            str(job.get("paused")),
+            str(job.get("missed")),
+        )
+    console.print(table)
 
 
 @app.command()
@@ -254,45 +359,135 @@ def update(
 def start(
     ctx: typer.Context,
     sync_id: str = typer.Argument(..., help="Sync identifier to start."),
+    config_dir: Optional[Path] = typer.Option(
+        None,
+        "--config-dir",
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+        help="Base directory for config files (defaults to ~/.spotifreak).",
+    ),
 ) -> None:
     """Start a sync managed by the supervisor."""
 
     log = _logger(ctx)
-    log.info(
-        "start.not_implemented",
-        message="Start command not implemented yet",
-        sync_id=sync_id,
-    )
+    _maybe_update_log_level(ctx, config_dir)
+
+    try:
+        paths = determine_paths(config_dir)
+        context = load_context(paths)
+    except ConfigError as exc:
+        log.error("start.failed", error=str(exc))
+        typer.echo(f"Error loading configuration: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if sync_id not in {sync.id for sync in context.syncs}:
+        typer.echo(f"Sync '{sync_id}' not found in {context.paths.syncs_dir}")
+        raise typer.Exit(code=1)
+
+    socket_path = Path(context.global_config.supervisor.ipc_socket).expanduser()
+    try:
+        response = send_ipc_command(socket_path, {"command": "start", "sync_id": sync_id})
+    except IPCError as exc:
+        log.error("start.ipc_failed", error=str(exc))
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    if response.get("status") != "ok":
+        typer.echo(f"Supervisor error: {response.get('message')}")
+        raise typer.Exit(code=1)
+
+    typer.echo(response.get("message", "Triggered"))
 
 
 @app.command()
 def pause(
     ctx: typer.Context,
     sync_id: str = typer.Argument(..., help="Sync identifier to pause."),
+    config_dir: Optional[Path] = typer.Option(
+        None,
+        "--config-dir",
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+        help="Base directory for config files (defaults to ~/.spotifreak).",
+    ),
 ) -> None:
     """Pause a running sync."""
 
     log = _logger(ctx)
-    log.info(
-        "pause.not_implemented",
-        message="Pause command not implemented yet",
-        sync_id=sync_id,
-    )
+    _maybe_update_log_level(ctx, config_dir)
+
+    try:
+        paths = determine_paths(config_dir)
+        context = load_context(paths)
+    except ConfigError as exc:
+        log.error("pause.failed", error=str(exc))
+        typer.echo(f"Error loading configuration: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if sync_id not in {sync.id for sync in context.syncs}:
+        typer.echo(f"Sync '{sync_id}' not found in {context.paths.syncs_dir}")
+        raise typer.Exit(code=1)
+
+    socket_path = Path(context.global_config.supervisor.ipc_socket).expanduser()
+    try:
+        response = send_ipc_command(socket_path, {"command": "pause", "sync_id": sync_id})
+    except IPCError as exc:
+        log.error("pause.ipc_failed", error=str(exc))
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    if response.get("status") != "ok":
+        typer.echo(f"Supervisor error: {response.get('message')}")
+        raise typer.Exit(code=1)
+
+    typer.echo(response.get("message", "Paused"))
 
 
 @app.command()
 def resume(
     ctx: typer.Context,
     sync_id: str = typer.Argument(..., help="Sync identifier to resume."),
+    config_dir: Optional[Path] = typer.Option(
+        None,
+        "--config-dir",
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+        help="Base directory for config files (defaults to ~/.spotifreak).",
+    ),
 ) -> None:
     """Resume a paused sync."""
 
     log = _logger(ctx)
-    log.info(
-        "resume.not_implemented",
-        message="Resume command not implemented yet",
-        sync_id=sync_id,
-    )
+    _maybe_update_log_level(ctx, config_dir)
+
+    try:
+        paths = determine_paths(config_dir)
+        context = load_context(paths)
+    except ConfigError as exc:
+        log.error("resume.failed", error=str(exc))
+        typer.echo(f"Error loading configuration: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if sync_id not in {sync.id for sync in context.syncs}:
+        typer.echo(f"Sync '{sync_id}' not found in {context.paths.syncs_dir}")
+        raise typer.Exit(code=1)
+
+    socket_path = Path(context.global_config.supervisor.ipc_socket).expanduser()
+    try:
+        response = send_ipc_command(socket_path, {"command": "resume", "sync_id": sync_id})
+    except IPCError as exc:
+        log.error("resume.ipc_failed", error=str(exc))
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    if response.get("status") != "ok":
+        typer.echo(f"Supervisor error: {response.get('message')}")
+        raise typer.Exit(code=1)
+
+    typer.echo(response.get("message", "Resumed"))
 
 
 @app.command()
@@ -300,16 +495,45 @@ def delete(
     ctx: typer.Context,
     sync_id: str = typer.Argument(..., help="Sync identifier to delete."),
     force: bool = typer.Option(False, "--force", help="Delete without supervisor confirmation."),
+    config_dir: Optional[Path] = typer.Option(
+        None,
+        "--config-dir",
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+        help="Base directory for config files (defaults to ~/.spotifreak).",
+    ),
 ) -> None:
     """Delete a sync definition."""
 
     log = _logger(ctx)
-    log.info(
-        "delete.not_implemented",
-        message="Delete command not implemented yet",
-        sync_id=sync_id,
-        force=force,
-    )
+    _maybe_update_log_level(ctx, config_dir)
+
+    try:
+        paths = determine_paths(config_dir)
+        context = load_context(paths)
+    except ConfigError as exc:
+        log.error("delete.failed", error=str(exc))
+        typer.echo(f"Error loading configuration: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if sync_id not in {sync.id for sync in context.syncs}:
+        typer.echo(f"Sync '{sync_id}' not found in {context.paths.syncs_dir}")
+        raise typer.Exit(code=1)
+
+    socket_path = Path(context.global_config.supervisor.ipc_socket).expanduser()
+    try:
+        response = send_ipc_command(socket_path, {"command": "delete", "sync_id": sync_id, "force": force})
+    except IPCError as exc:
+        log.error("delete.ipc_failed", error=str(exc))
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    if response.get("status") != "ok":
+        typer.echo(f"Supervisor error: {response.get('message')}")
+        raise typer.Exit(code=1)
+
+    typer.echo(response.get("message", "Removed"))
 
 
 @app.command()
@@ -322,12 +546,14 @@ def run(
         dir_okay=True,
         file_okay=False,
         resolve_path=True,
-        help="Base directory for config files (defaults to ~/.spoticraft).",
+        help="Base directory for config files (defaults to ~/.spotifreak).",
     ),
 ) -> None:
     """Execute a sync once outside the supervisor."""
 
     log = _logger(ctx)
+
+    _maybe_update_log_level(ctx, config_dir)
 
     try:
         paths = determine_paths(config_dir)
@@ -385,7 +611,13 @@ def run(
         raise typer.Exit(code=1) from exc
 
     module = module_factory(sync_config)
-    sync_context = SyncContext(logger=module_logger, spotify=spotify_service, state=sync_state)
+    sync_context = SyncContext(
+        logger=module_logger,
+        spotify=spotify_service,
+        state=sync_state,
+        global_config=context.global_config,
+        paths=context.paths,
+    )
 
     def _build_details(stage: Optional[str] = None) -> dict:
         details = {"mode": "cli"}
@@ -431,13 +663,15 @@ def state_set_last_track(
         dir_okay=True,
         file_okay=False,
         resolve_path=True,
-        help="Base directory for config files (defaults to ~/.spoticraft).",
+        help="Base directory for config files (defaults to ~/.spotifreak).",
     ),
 ) -> None:
     """Set the last processed track for a sync."""
 
     log = _logger(ctx)
     track_id = parse_track_id(track)
+
+    _maybe_update_log_level(ctx, config_dir)
 
     try:
         paths = determine_paths(config_dir)
@@ -477,12 +711,14 @@ def doctor(
         dir_okay=True,
         file_okay=False,
         resolve_path=True,
-        help="Base directory for config files (defaults to ~/.spoticraft).",
+        help="Base directory for config files (defaults to ~/.spotifreak).",
     ),
 ) -> None:
     """Run basic diagnostics against the Spotify API."""
 
     log = _logger(ctx)
+
+    _maybe_update_log_level(ctx, config_dir)
 
     try:
         paths = determine_paths(config_dir)
@@ -551,17 +787,49 @@ def doctor(
 def logs(
     ctx: typer.Context,
     sync_id: str = typer.Argument(..., help="Sync identifier to inspect."),
-    tail: int = typer.Option(50, help="Number of log lines to display."),
+    tail: int = typer.Option(10, help="Number of recent runs to display."),
+    config_dir: Optional[Path] = typer.Option(
+        None,
+        "--config-dir",
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+        help="Base directory for config files (defaults to ~/.spotifreak).",
+    ),
 ) -> None:
     """Show recent logs for a sync."""
 
     log = _logger(ctx)
-    log.info(
-        "logs.not_implemented",
-        message="Log viewing not implemented yet",
-        sync_id=sync_id,
-        tail=tail,
-    )
+    _maybe_update_log_level(ctx, config_dir)
+
+    try:
+        paths = determine_paths(config_dir)
+        context = load_context(paths)
+    except ConfigError as exc:
+        log.error("logs.failed", error=str(exc))
+        typer.echo(f"Error loading configuration: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    try:
+        sync_config = next(sync for sync in context.syncs if sync.id == sync_id)
+    except StopIteration:
+        typer.echo(f"Sync '{sync_id}' not found in {paths.syncs_dir}")
+        log.error("logs.missing_sync", sync_id=sync_id)
+        raise typer.Exit(code=1)
+
+    state_path = state_path_for_sync(context.paths, context.global_config, sync_config)
+    state = load_state(state_path)
+    history = state.data.get("run_history", [])
+    if not history:
+        typer.echo("No run history available yet.")
+        return
+
+    entries = history[-tail:]
+    for item in entries:
+        started = item.get("started_at", "?")
+        status = item.get("status", "?")
+        message = item.get("details", {}).get("reason") or item.get("details", {}).get("status", "")
+        typer.echo(f"[{status}] {started} -> {item.get('completed_at', '-')} {message}")
 
 
 def main() -> None:

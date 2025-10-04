@@ -1,4 +1,4 @@
-"""Persistent state management for Spoticraft syncs."""
+"""Persistent state management for Spotifreak syncs."""
 
 from __future__ import annotations
 

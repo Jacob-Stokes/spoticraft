@@ -1,0 +1,19 @@
+id: demo-liked-to-archive
+type: playlist_mirror
+schedule:
+  interval: 10s
+options:
+  source:
+    kind: saved_tracks
+    max_tracks: 100
+    lookback_days: 7
+    full_scan: false
+    scan_direction: newest
+  targets:
+    - kind: playlist_pattern
+      pattern: ${month_abbr}${year_short}
+    - kind: playlist_pattern
+      pattern: (${year_full})
+    - kind: playlist_name
+      name: All Liked Songs
+  deduplicate: true
