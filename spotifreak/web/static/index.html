@@ -10,7 +10,16 @@
   <body>
     <header class="app-header">
       <h1>Spotifreak Dashboard</h1>
-      <button id="refresh-button" class="secondary">Refresh</button>
+      <div class="header-controls">
+        <label class="inline" for="theme-select">Theme
+          <select id="theme-select">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <button id="refresh-button" class="secondary">Refresh</button>
+      </div>
     </header>
 
     <main class="layout">
@@ -26,7 +35,7 @@
 
       <section class="panel" aria-labelledby="syncs-heading">
         <div class="panel-heading">
-          <h2 id="syncs-heading">Syncs</h2>
+          <h2 id="syncs-heading">Scheduled Syncs</h2>
           <div class="panel-actions">
             <label class="inline">History tail
               <input id="history-tail" type="number" min="1" max="100" value="5" />
@@ -34,6 +43,56 @@
           </div>
         </div>
         <div id="sync-list" class="sync-grid"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="configs-heading">
+        <div class="panel-heading">
+          <h2 id="configs-heading">Sync Configurations</h2>
+          <div class="panel-actions">
+            <input id="config-search" type="search" placeholder="Filter by id or type" />
+            <button id="new-sync-button">New Sync</button>
+          </div>
+        </div>
+
+        <div class="panel-body">
+          <div id="config-empty" class="muted">Loading sync configs…</div>
+          <table id="config-table" class="data-table hidden" aria-label="Sync configurations">
+            <thead>
+              <tr>
+                <th scope="col">ID</th>
+                <th scope="col">Type</th>
+                <th scope="col">Schedule</th>
+                <th scope="col">Status</th>
+                <th scope="col" class="actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="assets-heading">
+        <div class="panel-heading">
+          <h2 id="assets-heading">Assets</h2>
+          <div class="panel-actions">
+            <button id="upload-asset-button">Upload</button>
+            <input id="asset-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="hidden-input" />
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="assets-empty" class="muted">Loading assets…</div>
+          <table id="assets-table" class="data-table hidden" aria-label="Uploaded assets">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Size</th>
+                <th scope="col">Updated</th>
+                <th scope="col" class="actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
@@ -58,8 +117,8 @@
             <dd class="sync-next-run"></dd>
           </div>
           <div>
-            <dt>Options</dt>
-            <dd class="sync-options"></dd>
+            <dt>Description</dt>
+            <dd class="sync-description"></dd>
           </div>
         </dl>
         <div class="sync-actions">
@@ -74,5 +133,40 @@
         </details>
       </article>
     </template>
+
+    <div id="editor-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      <div class="modal-content">
+        <header class="modal-header">
+          <div>
+            <h2 id="editor-title">Edit Sync</h2>
+            <p id="editor-subtitle" class="muted"></p>
+          </div>
+          <button id="editor-close" class="icon-button" aria-label="Close editor">✕</button>
+        </header>
+
+        <div class="modal-body">
+          <div class="editor-sidebar">
+            <label class="inline" for="template-select">Template</label>
+            <select id="template-select"></select>
+            <button id="apply-template" class="secondary">Apply Template</button>
+
+            <div id="editor-summary" class="summary-card hidden"></div>
+          </div>
+          <div class="editor-main">
+            <textarea id="config-editor" spellcheck="false"></textarea>
+          </div>
+        </div>
+
+        <footer class="modal-footer">
+          <div class="modal-footer-left">
+            <button id="duplicate-sync" class="secondary">Duplicate</button>
+            <button id="delete-sync" class="danger">Delete</button>
+          </div>
+          <div class="modal-footer-right">
+            <button id="save-sync">Save</button>
+          </div>
+        </footer>
+      </div>
+    </div>
   </body>
 </html>

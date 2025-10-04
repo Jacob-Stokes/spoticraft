@@ -1,5 +1,6 @@
 id: demo-liked-to-archive
 type: playlist_mirror
+description: Copy recent saved tracks into rolling monthly and yearly playlists
 schedule:
   interval: 10s
 options:

@@ -1,5 +1,6 @@
 id: demo-playlist-presentation
 type: playlist_presentation
+description: Rotate cover art and titles for the demo playlist based on sunrise and sunset phases
 schedule:
   interval: 1m
 options:

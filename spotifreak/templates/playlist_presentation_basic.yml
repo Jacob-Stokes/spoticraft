@@ -1,0 +1,49 @@
+id: playlist_presentation_basic
+name: Playlist Presentation (Cover + Title Rotation)
+description: Rotate cover art, titles, and descriptions using sunrise and sunset phases
+content: |
+  id: my-presentation
+  type: playlist_presentation
+  description: Rotate cover art and titles throughout the day using sunrise and sunset phases
+  schedule:
+    interval: 30m
+  options:
+    playlist:
+      kind: playlist_name
+      name: Moodboard
+    phases:
+      mode: sunrise_sunset
+      sunrise:
+        latitude: 51.5074
+        longitude: -0.1278
+        morning_duration_hours: 4
+        evening_duration_hours: 2
+        night_offset_hours: 1
+    cover:
+      enabled: true
+      selection: sequential
+      assets:
+        morning:
+          - assets/morning.jpg
+        day:
+          - assets/day.jpg
+        evening:
+          - assets/evening.jpg
+        night:
+          - assets/night.jpg
+    title:
+      enabled: true
+      selection: random
+      assets:
+        default:
+          - Moodboard Morning
+          - Moodboard Afternoon
+          - Moodboard Sunset
+          - Moodboard Midnight
+    description:
+      enabled: true
+      selection: sequential
+      use_dynamic: true
+      dynamic_templates:
+        - Curated vibes for {weekday} {time}
+        - Tunes for {weekday} adventures

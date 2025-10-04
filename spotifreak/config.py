@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import importlib.resources as resources
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+SYNC_FILE_EXTENSIONS: tuple[str, ...] = (".yml", ".yaml")
+DEFAULT_SYNC_EXTENSION = ".yml"
+TEMPLATE_FILE_EXTENSIONS: tuple[str, ...] = (".yml", ".yaml")
+DEFAULT_TEMPLATE_EXTENSION = ".yml"
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -19,6 +27,8 @@ class BootstrapReport:
     base_created: bool
     state_dir_created: bool
     syncs_dir_created: bool
+    templates_dir_created: bool
+    assets_dir_created: bool
     global_config_created: bool
     global_config_overwritten: bool
 
@@ -58,6 +68,24 @@ class ConfigPaths:
         """Default directory for sync state files."""
 
         return self.base_dir / "state"
+
+    @property
+    def templates_dir(self) -> Path:
+        """Default directory for user-defined templates."""
+
+        return self.base_dir / "templates"
+
+    @property
+    def assets_dir(self) -> Path:
+        """Default directory for uploaded assets (e.g. images)."""
+
+        return self.base_dir / "assets"
+
+    @property
+    def templates_dir(self) -> Path:
+        """Default directory for user-defined templates."""
+
+        return self.base_dir / "templates"
 
     def resolve_state_path(self, state_file: Optional[str]) -> Path:
         """Resolve a relative state file path against ``base_dir``.
@@ -163,7 +191,19 @@ class SyncConfig(BaseModel):
     type: str
     schedule: SyncSchedule
     state_file: Optional[str] = None
+    description: Optional[str] = None
     options: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TemplateDefinition(BaseModel):
+    """Definition of a sync template."""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    content: str
 
     model_config = ConfigDict(extra="forbid")
 
@@ -194,7 +234,7 @@ def iter_sync_config_paths(syncs_dir: Path) -> Iterable[Path]:
 
     if not syncs_dir.exists():
         return []
-    return sorted(p for p in syncs_dir.iterdir() if p.suffix in {".yml", ".yaml"} and p.is_file())
+    return sorted(p for p in syncs_dir.iterdir() if p.suffix in SYNC_FILE_EXTENSIONS and p.is_file())
 
 
 def load_sync_configs(syncs_dir: Path) -> List[SyncConfig]:
@@ -208,6 +248,156 @@ def load_sync_configs(syncs_dir: Path) -> List[SyncConfig]:
         except Exception as exc:  # pragma: no cover - validation errors depend on user input
             raise ConfigError(f"Invalid sync configuration: {path}") from exc
     return configs
+
+
+def _normalise_identifier(identifier: str) -> str:
+    candidate = (identifier or "").strip()
+    if not candidate:
+        raise ValueError("Identifier cannot be empty")
+
+    forbidden = {"/", "\\", "\0", "\n", "\r", "\t"}
+    for sep in (os.sep, os.altsep):
+        if sep:
+            forbidden.add(sep)
+
+    if any(char in candidate for char in forbidden):
+        raise ValueError("Identifier contains invalid characters")
+
+    return candidate
+
+
+def sync_config_path(paths: ConfigPaths, sync_id: str, *, must_exist: bool = False) -> Path:
+    """Return the filesystem path for ``sync_id``.
+
+    When ``must_exist`` is True, raise ``ConfigError`` if no file is found.
+    Otherwise the default ``.yml`` location is returned for writes.
+    """
+
+    normalised_id = _normalise_identifier(sync_id)
+    candidates = [paths.syncs_dir / f"{normalised_id}{ext}" for ext in SYNC_FILE_EXTENSIONS]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    if must_exist:
+        raise ConfigError(f"Sync '{sync_id}' not found in {paths.syncs_dir}")
+
+    return paths.syncs_dir / f"{normalised_id}{DEFAULT_SYNC_EXTENSION}"
+
+
+def load_sync_config_file(path: Path) -> SyncConfig:
+    payload = _read_yaml(path)
+    try:
+        return SyncConfig.model_validate(payload)
+    except Exception as exc:  # pragma: no cover - depends on user input
+        raise ConfigError(f"Invalid sync configuration: {path}") from exc
+
+
+def dump_sync_config(config: SyncConfig) -> Dict[str, Any]:
+    return config.model_dump(mode="python", exclude_none=True)
+
+
+def write_sync_config(path: Path, config: SyncConfig) -> None:
+    _write_yaml(path, dump_sync_config(config))
+
+
+def delete_sync_config(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        raise ConfigError(f"Sync configuration not found: {path}")
+
+
+def iter_template_config_paths(template_dir: Path) -> Iterable[Path]:
+    if not template_dir.exists():
+        return []
+    return sorted(
+        p for p in template_dir.iterdir() if p.suffix in TEMPLATE_FILE_EXTENSIONS and p.is_file()
+    )
+
+
+def load_template_configs(template_dir: Path) -> List[TemplateDefinition]:
+    templates: List[TemplateDefinition] = []
+    for path in iter_template_config_paths(template_dir):
+        payload = _read_yaml(path)
+        try:
+            templates.append(TemplateDefinition.model_validate(payload))
+        except Exception as exc:  # pragma: no cover - depends on user input
+            raise ConfigError(f"Invalid template definition: {path}") from exc
+    return templates
+
+
+def template_config_path(paths: ConfigPaths, template_id: str, *, must_exist: bool = False) -> Path:
+    normalised_id = _normalise_identifier(template_id)
+    candidates = [paths.templates_dir / f"{normalised_id}{ext}" for ext in TEMPLATE_FILE_EXTENSIONS]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    if must_exist:
+        raise ConfigError(f"Template '{template_id}' not found in {paths.templates_dir}")
+
+    return paths.templates_dir / f"{normalised_id}{DEFAULT_TEMPLATE_EXTENSION}"
+
+
+def load_template_file(path: Path) -> TemplateDefinition:
+    payload = _read_yaml(path)
+    try:
+        return TemplateDefinition.model_validate(payload)
+    except Exception as exc:  # pragma: no cover - depends on user input
+        raise ConfigError(f"Invalid template definition: {path}") from exc
+
+
+def dump_template_definition(template: TemplateDefinition) -> Dict[str, Any]:
+    return template.model_dump(mode="python", exclude_none=True)
+
+
+def write_template_config(path: Path, template: TemplateDefinition) -> None:
+    _write_yaml(path, dump_template_definition(template))
+
+
+def delete_template_config(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        raise ConfigError(f"Template not found: {path}")
+
+
+def load_builtin_templates() -> List[TemplateDefinition]:
+    templates: List[TemplateDefinition] = []
+    try:
+        package_root = resources.files("spotifreak.templates")
+    except (ModuleNotFoundError, FileNotFoundError):  # pragma: no cover - defensive
+        return templates
+
+    for entry in package_root.iterdir():
+        if not entry.is_file() or entry.name.startswith("__"):
+            continue
+        if any(entry.name.endswith(ext) for ext in TEMPLATE_FILE_EXTENSIONS):
+            try:
+                payload = yaml.safe_load(entry.read_text(encoding="utf-8")) or {}
+                templates.append(TemplateDefinition.model_validate(payload))
+            except Exception:  # pragma: no cover - defensive
+                continue
+    return templates
+
+
+def iter_asset_entries(assets_dir: Path) -> Iterable[Path]:
+    if not assets_dir.exists():
+        return []
+
+    entries: list[Path] = []
+    for root, dirs, files in os.walk(assets_dir):
+        root_path = Path(root)
+        for directory in dirs:
+            entries.append(root_path / directory)
+        for file in files:
+            entries.append(root_path / file)
+
+    entries.sort()
+    return entries
 
 
 def _default_global_config(paths: ConfigPaths) -> Dict[str, Any]:
@@ -264,6 +454,8 @@ def bootstrap(paths: ConfigPaths, overwrite: bool = False) -> BootstrapReport:
     base_created = False
     state_dir_created = False
     syncs_dir_created = False
+    templates_dir_created = False
+    assets_dir_created = False
     global_config_created = False
     global_config_overwritten = False
 
@@ -279,6 +471,14 @@ def bootstrap(paths: ConfigPaths, overwrite: bool = False) -> BootstrapReport:
         paths.syncs_dir.mkdir(parents=True, exist_ok=True)
         syncs_dir_created = True
 
+    if not paths.templates_dir.exists():
+        paths.templates_dir.mkdir(parents=True, exist_ok=True)
+        templates_dir_created = True
+
+    if not paths.assets_dir.exists():
+        paths.assets_dir.mkdir(parents=True, exist_ok=True)
+        assets_dir_created = True
+
     existing_global = paths.global_config.exists()
     if not existing_global or overwrite:
         _write_yaml(paths.global_config, _default_global_config(paths))
@@ -289,6 +489,8 @@ def bootstrap(paths: ConfigPaths, overwrite: bool = False) -> BootstrapReport:
         base_created=base_created,
         state_dir_created=state_dir_created,
         syncs_dir_created=syncs_dir_created,
+        templates_dir_created=templates_dir_created,
+        assets_dir_created=assets_dir_created,
         global_config_created=global_config_created,
         global_config_overwritten=global_config_overwritten,
     )

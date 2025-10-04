@@ -52,3 +52,4 @@ include = ["spotifreak", "spotifreak.*"]
   "static/*",
   "static/**/*",
 ]
+"spotifreak.templates" = ["*.yml"]

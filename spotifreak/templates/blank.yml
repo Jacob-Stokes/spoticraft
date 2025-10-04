@@ -1,0 +1,10 @@
+id: blank
+name: Blank Definition
+description: Start from an empty sync template
+content: |
+  id: my-sync
+  type: playlist_mirror
+  description: Describe what this sync should do
+  schedule:
+    interval: 10m
+  options: {}

@@ -1,0 +1,21 @@
+id: playlist_retention_basic
+name: Playlist Retention (Trim by Age)
+description: Keep a playlist fresh by removing entries older than 30 days and archiving them
+content: |
+  id: my-weekly-refresh
+  type: playlist_retention
+  description: Trim a playlist to the last 30 days of additions and archive removals
+  schedule:
+    interval: 1h
+  options:
+    playlist:
+      kind: playlist_name
+      name: My Weekly Rotation
+    retention:
+      mode: age
+      max_age_days: 30
+    archive:
+      enabled: true
+      target:
+        kind: playlist_name
+        name: My Weekly Rotation Archive

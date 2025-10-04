@@ -1,5 +1,6 @@
 id: demo-lastfm-top-tracks
 type: lastfm_top_tracks
+description: Mirror the latest Last.fm weekly top tracks into a playlist
 schedule:
   interval: 1h
 options:

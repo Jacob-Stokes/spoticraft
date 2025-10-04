@@ -1,0 +1,24 @@
+id: playlist_mirror_basic
+name: Playlist Mirror (Saved Tracks → Monthly/Yearly)
+description: Copy recent saved tracks into rolling monthly and yearly playlists
+content: |
+  id: my-liked-to-archive
+  type: playlist_mirror
+  description: Copy recent saved tracks into rolling monthly and yearly playlists
+  schedule:
+    interval: 10m
+  options:
+    source:
+      kind: saved_tracks
+      max_tracks: 200
+      lookback_days: 14
+      full_scan: false
+      scan_direction: newest
+    targets:
+      - kind: playlist_pattern
+        pattern: ${month_abbr}${year_short}
+      - kind: playlist_pattern
+        pattern: (${year_full})
+      - kind: playlist_name
+        name: All Liked Songs
+    deduplicate: true
