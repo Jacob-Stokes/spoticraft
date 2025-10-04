@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spoticraft"
+version = "0.1.0"
+description = "Modular Spotify sync supervisor and CLI"
+readme = "README.MD"
+requires-python = ">=3.9"
+authors = [
+  { name = "Jacob" }
+]
+license = { text = "MIT" }
+dependencies = [
+  "typer>=0.12,<1.0",
+  "rich>=13.7,<14",
+  "structlog>=24.1,<25",
+  "pydantic>=2.6,<3",
+  "apscheduler>=3.10,<4",
+  "watchfiles>=0.21,<0.22",
+  "pyyaml>=6.0,<7",
+  "spotipy>=2.23,<3",
+]
+
+[project.scripts]
+spoticraft = "spoticraft.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4,<8",
+  "ruff>=0.3,<0.4",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+addopts = "-qs"
+
+[tool.setuptools.packages.find]
+include = ["spoticraft", "spoticraft.*"]

@@ -1,0 +1,8 @@
+old-spotify-sync/
+PLAN.MD
+TASKLIST.MD
+.venv/
+spoticraft.egg-info/
+.spoticraft-sample/
+*.log
+new-repo/
