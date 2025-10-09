@@ -12,34 +12,143 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Tuple
 
 import requests
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .base import SyncContext, SyncModule
 from .playlist_mirror import PlaylistResolverConfig
 from ..services.spotify_client import SpotifyService
 
 
+@dataclass
+class AssetCandidate:
+    """Represents a single asset option with optional weighting metadata."""
+
+    value: str
+    weight: float = 1.0
+    source_id: str = ""
+
+
+@dataclass
+class FeatureOutcome:
+    """Selection result for a feature update."""
+
+    should_apply: bool
+    value: Optional[str]
+    reason: Optional[str] = None
+
+
+class FeatureSelection(BaseModel):
+    """Controls how assets are picked for a feature run."""
+
+    mode: Literal["sequential", "random", "weighted_random", "round_robin"] = "sequential"
+    dedupe_window: int = Field(default=0, ge=0)
+    restart_policy: Literal["loop", "bounce", "random_restart"] = "loop"
+    group_key: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class FeatureCadence(BaseModel):
+    """Cadence controls for feature execution frequency."""
+
+    multiplier: int = Field(default=1, ge=1)
+    phase_overrides: Dict[str, int] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class AssetSource(BaseModel):
+    """Definition of where to pull assets for a feature."""
+
+    type: Literal["list", "folder", "fallback"] = "list"
+    items: List[str] = Field(default_factory=list)
+    path: Optional[str] = None
+    pattern: Optional[str] = None
+    recursive: bool = False
+    shuffle_on_load: bool = False
+    max_items: Optional[int] = Field(default=None, ge=1)
+    weight: float = 1.0
+    cache_ttl_seconds: int = Field(default=300, ge=0)
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class FeatureOptions(BaseModel):
     enabled: bool = False
-    selection: Literal["sequential", "random"] = "sequential"
+    selection: FeatureSelection = Field(default_factory=FeatureSelection)
+    sources: Dict[str, List[AssetSource]] = Field(default_factory=dict)
+    fallback_asset: Optional[str] = None
+    failure_mode: Literal["skip", "reuse_last", "stop"] = "skip"
+    cadence: FeatureCadence = Field(default_factory=FeatureCadence)
     assets: Dict[str, List[str]] = Field(default_factory=dict)
 
+    model_config = ConfigDict(extra="ignore")
+
     @model_validator(mode="before")
-    def normalize_assets(cls, value):  # type: ignore[override]
+    def _normalise_legacy_schema(cls, value: Any):  # type: ignore[override]
+        """Coerce legacy configuration shapes into the newer feature schema."""
+        # Allow bare lists (legacy "assets" shorthand)
         if isinstance(value, list):
             return {"enabled": True, "assets": {"default": value}}
-        if isinstance(value, dict):
-            data = dict(value)
-            assets = data.get("assets")
-            if isinstance(assets, list):
-                data["assets"] = {"default": assets}
-            return data
-        return value
+
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+
+        # Legacy selection strings -> structured configuration
+        selection = data.get("selection")
+        if isinstance(selection, str):
+            data["selection"] = {"mode": selection}
+
+        # Legacy assets list -> default bucket
+        assets = data.get("assets")
+        if isinstance(assets, list):
+            data["assets"] = {"default": assets}
+
+        # Normalise sources entries so downstream parsing is predictable
+        raw_sources = data.get("sources")
+        if isinstance(raw_sources, dict):
+            normalised_sources: Dict[str, List[Any]] = {}
+            for phase, entries in raw_sources.items():
+                items: List[Any]
+                if isinstance(entries, list):
+                    items = []
+                    for entry in entries:
+                        if isinstance(entry, str):
+                            items.append({"type": "list", "items": [entry]})
+                        else:
+                            items.append(entry)
+                else:
+                    items = [entries]
+                normalised_sources[phase] = items
+            data["sources"] = normalised_sources
+
+        return data
+
+    @model_validator(mode="after")
+    def _populate_sources(self) -> "FeatureOptions":
+        """Ensure feature sources are available as fully parsed objects."""
+        if not self.sources and self.assets:
+            converted: Dict[str, List[AssetSource]] = {}
+            for phase, items in self.assets.items():
+                converted[phase] = [AssetSource(type="list", items=[str(item) for item in items])]
+            self.sources = converted
+        elif self.sources:
+            # Ensure nested lists are parsed into AssetSource instances
+            parsed: Dict[str, List[AssetSource]] = {}
+            for phase, entries in self.sources.items():
+                parsed[phase] = [AssetSource.model_validate(entry) if not isinstance(entry, AssetSource) else entry for entry in entries]
+            self.sources = parsed
+
+        return self
 
 
 class DescriptionOptions(FeatureOptions):
     use_dynamic: bool = False
     dynamic_templates: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class CustomPhase(BaseModel):
@@ -62,6 +171,7 @@ class PhasesOptions(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> "PhasesOptions":
+        """Validate that auxiliary settings exist for the selected phase mode."""
         if self.mode == "sunrise_sunset" and not self.sunrise:
             raise ValueError("sunrise options must be provided when mode is 'sunrise_sunset'")
         if self.mode == "custom" and not self.custom:
@@ -86,6 +196,7 @@ class PlaylistPresentationModule(SyncModule):
     config: any
 
     def __init__(self, config):
+        """Validate provided sync configuration and cache derived options."""
         self.config = config
         try:
             self.options = PlaylistPresentationOptions.model_validate(config.options)
@@ -94,6 +205,7 @@ class PlaylistPresentationModule(SyncModule):
         self.last_run_summary: dict = {}
 
     def run(self, context: SyncContext) -> None:
+        """Execute a single presentation update cycle for the target playlist."""
         logger = context.logger
         service = context.spotify
         state = context.state
@@ -243,6 +355,7 @@ class PlaylistPresentationModule(SyncModule):
     # Helper methods
     # ------------------------------------------------------------------
     def _resolve_playlist(self, service: SpotifyService) -> str:
+        """Resolve or create the playlist ID backing this presentation."""
         resolver = self.options.playlist
         if resolver.kind == "playlist_id" and resolver.playlist_id:
             return resolver.playlist_id
@@ -268,6 +381,7 @@ class PlaylistPresentationModule(SyncModule):
         state,
         context: SyncContext,
     ) -> str:
+        """Determine which phase (morning, day, etc.) should drive assets now."""
         options = self.options.phases
         if not options or options.mode == "none":
             return "default"
@@ -301,6 +415,7 @@ class PlaylistPresentationModule(SyncModule):
         return "default"
 
     def _build_custom_schedule(self, phases: List[CustomPhase], now: datetime) -> Dict[str, datetime]:
+        """Translate custom phase definitions into concrete datetimes for today."""
         tz = now.astimezone().tzinfo
         today = now.astimezone().date()
         schedule: Dict[str, datetime] = {}
@@ -319,6 +434,7 @@ class PlaylistPresentationModule(SyncModule):
         now: datetime,
         context: SyncContext,
     ) -> Optional[Dict[str, datetime]]:
+        """Fetch sunrise/sunset data and calculate morning/day/evening/night spans."""
         params = {
             "lat": str(options.latitude),
             "lng": str(options.longitude),
@@ -360,6 +476,7 @@ class PlaylistPresentationModule(SyncModule):
         now: datetime,
         default: str = "default",
     ) -> str:
+        """Pick the current phase label by comparing now against schedule windows."""
         if not schedule:
             return default
         sorted_items = sorted(schedule.items(), key=lambda item: item[1])
@@ -379,6 +496,7 @@ class PlaylistPresentationModule(SyncModule):
         return sorted_items[-1][0]
 
     def _should_execute_now(self, presentation_state: dict, now: datetime, interval: int) -> bool:
+        """Check whether enough time has elapsed to perform another update."""
         last_iso = presentation_state.get("last_updated_at")
         if not last_iso:
             return True
@@ -390,6 +508,7 @@ class PlaylistPresentationModule(SyncModule):
         return elapsed >= interval
 
     def _remaining_interval(self, presentation_state: dict, now: datetime, interval: int) -> int:
+        """Return remaining seconds before the next eligible run."""
         last_iso = presentation_state.get("last_updated_at")
         if not last_iso:
             return 0
@@ -415,6 +534,7 @@ class PlaylistPresentationModule(SyncModule):
         rng: random.Random,
         is_description: bool = False,
     ) -> "FeatureOutcome":
+        """Resolve whether a feature should update and which asset to apply."""
         if not options.enabled:
             return FeatureOutcome(False, None, "disabled")
 
@@ -474,6 +594,7 @@ class PlaylistPresentationModule(SyncModule):
         features_state: dict,
         groups_state: dict,
     ) -> dict:
+        """Return per-feature state, optionally shared across grouped features."""
         group_key = options.selection.group_key
         if not group_key:
             return features_state.setdefault(feature_name, {})
@@ -491,6 +612,7 @@ class PlaylistPresentationModule(SyncModule):
         now: datetime,
         presentation_state: dict,
     ) -> bool:
+        """Determine if cadence rules allow this feature to change this run."""
         global_count = presentation_state.get("global_run_count", 1)
         if cadence.multiplier > 1 and global_count % cadence.multiplier != 0:
             return False
@@ -518,6 +640,7 @@ class PlaylistPresentationModule(SyncModule):
         cache_state: dict,
         rng: random.Random,
     ) -> Tuple[List[AssetCandidate], Dict[str, List[str]]]:
+        """Build candidate asset list for the feature and phase."""
         phase_sources = list(options.sources.get(phase, []))
         default_sources = options.sources.get("default", [])
         if phase != "default":
@@ -563,6 +686,7 @@ class PlaylistPresentationModule(SyncModule):
         cache_state: dict,
         rng: random.Random,
     ) -> List[str]:
+        """Resolve raw asset values from a source definition."""
         if source.type == "list":
             return [str(item) for item in source.items]
 
@@ -616,6 +740,7 @@ class PlaylistPresentationModule(SyncModule):
         phase: str,
         rng: random.Random,
     ) -> Optional[str]:
+        """Pick the winning asset while honouring selection strategy and grouping."""
         group_key = options.selection.group_key
         group_state: Optional[dict] = None
         if group_key:
@@ -660,6 +785,7 @@ class PlaylistPresentationModule(SyncModule):
 
     @staticmethod
     def _trim_history(history: List[str], window: int) -> None:
+        """Keep history bounded to avoid unbounded growth."""
         if window <= 0:
             history.clear()
             return
@@ -675,6 +801,7 @@ class PlaylistPresentationModule(SyncModule):
         *,
         force_next: bool = False,
     ) -> Optional[str]:
+        """Walk candidates in order, supporting bounce and restart behaviour."""
         if not candidates:
             return None
 
@@ -705,6 +832,7 @@ class PlaylistPresentationModule(SyncModule):
         selection: FeatureSelection,
         rng: random.Random,
     ) -> Optional[str]:
+        """Select a random candidate with optional dedupe attempts."""
         if not candidates:
             return None
         values = [candidate.value for candidate in candidates]
@@ -724,6 +852,7 @@ class PlaylistPresentationModule(SyncModule):
         window: int,
         rng: random.Random,
     ) -> Optional[str]:
+        """Pick an alternate random candidate avoiding recent history."""
         values = [candidate.value for candidate in candidates if candidate.value not in history[-window:]]
         if not values:
             return None
@@ -736,6 +865,7 @@ class PlaylistPresentationModule(SyncModule):
         selection: FeatureSelection,
         rng: random.Random,
     ) -> Optional[str]:
+        """Select a random candidate respecting per-item weights."""
         if not candidates:
             return None
         weights = [candidate.weight for candidate in candidates]
@@ -756,6 +886,7 @@ class PlaylistPresentationModule(SyncModule):
         candidates: Sequence[AssetCandidate],
         feature_state: dict,
     ) -> Optional[str]:
+        """Cycle through buckets to distribute usage evenly across sources."""
         if not candidates:
             return None
         if not bucket_map:
@@ -791,6 +922,7 @@ class PlaylistPresentationModule(SyncModule):
         exc: Exception,
         logger,
     ) -> bool:
+        """Decide how to proceed after an asset upload/update failure."""
         mode = options.failure_mode
         if mode == "reuse_last":
             last_value = feature_state.get("last_value")
@@ -811,6 +943,7 @@ class PlaylistPresentationModule(SyncModule):
 
 
     def _encode_image(self, raw_path: str, context: SyncContext) -> str:
+        """Load an image file from disk and return its base64 encoding."""
         path = Path(raw_path).expanduser()
         if not path.is_absolute() and context.paths:
             path = context.paths.base_dir / path
@@ -819,6 +952,7 @@ class PlaylistPresentationModule(SyncModule):
         return encoded
 
     def _render_dynamic_descriptions(self, templates: List[str]) -> List[str]:
+        """Render dynamic description templates with current datetime values."""
         now_local = datetime.now().astimezone()
         replacements = {
             "{time}": now_local.strftime("%H:%M"),
@@ -834,6 +968,7 @@ class PlaylistPresentationModule(SyncModule):
         return results
 
     def _default_description_templates(self) -> List[str]:
+        """Return fallback dynamic description templates."""
         return [
             "Updated at {time} on {weekday}",
             "Current vibe as of {date}",
@@ -841,11 +976,13 @@ class PlaylistPresentationModule(SyncModule):
         ]
 
     def _update_summary(self, **fields) -> None:
+        """Append run outcome details to the in-memory summary."""
         if not isinstance(self.last_run_summary, dict):
             self.last_run_summary = {}
         self.last_run_summary.update(fields)
 
     def _determine_interval_seconds(self) -> int:
+        """Compute effective run interval, falling back to schedule defaults."""
         if self.options.interval_seconds:
             return self.options.interval_seconds
 
@@ -858,6 +995,7 @@ class PlaylistPresentationModule(SyncModule):
         return 300
 
     def _parse_interval_expression(self, expression: str) -> Optional[int]:
+        """Convert scheduler interval strings into integer seconds."""
         pattern = re.compile(r"(\d+)([smhd])", re.IGNORECASE)
         total = 0
         pos = 0
