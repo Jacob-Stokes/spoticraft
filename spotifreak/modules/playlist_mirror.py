@@ -84,11 +84,15 @@ class PlaylistMirrorModule(SyncModule):
             return
 
         self._update_summary(total_source=len(source_track_ids))
-        tracks_to_process = self._filter_new_tracks(source_track_ids, context)
+        tracks_to_process = self._filter_new_tracks(
+            source_track_ids,
+            context,
+            direction=self.options.source.scan_direction,
+        )
         self._update_summary(processed=len(tracks_to_process))
 
         try:
-            targets = self._resolve_targets(service)
+            targets = self._resolve_targets(service, context)
         except SpotifyRateLimitError as exc:
             logger.warning("playlist_mirror.rate_limited", phase="target_resolve", retry_after=exc.retry_after)
             self._update_summary(status="rate_limited", reason="target_resolution_rate_limited", retry_after=exc.retry_after)
@@ -121,7 +125,11 @@ class PlaylistMirrorModule(SyncModule):
                 self._update_summary(status="noop", reason="no_new_tracks_after_deduplicate")
 
         if context.state and source_track_ids:
-            context.state.set_last_processed_track_id(source_track_ids[-1])
+            if (self.options.source.scan_direction or "oldest").lower() == "newest":
+                cursor_value = source_track_ids[0]
+            else:
+                cursor_value = source_track_ids[-1]
+            context.state.set_last_processed_track_id(cursor_value)
 
         logger.info("playlist_mirror.completed", targets=len(targets), processed=len(tracks_to_process))
 
@@ -157,7 +165,10 @@ class PlaylistMirrorModule(SyncModule):
     # ------------------------------------------------------------------
     # Target helpers
     # ------------------------------------------------------------------
-    def _resolve_targets(self, service: SpotifyService) -> List[TargetPlaylist]:
+    def _resolve_targets(self, service: SpotifyService, context: SyncContext) -> List[TargetPlaylist]:
+        cache_store: Dict[str, str] = {}
+        if context.state is not None:
+            cache_store = context.state.data.setdefault("playlist_cache", {})
         targets: List[TargetPlaylist] = []
         for resolver in self.options.targets:
             if resolver.kind == "playlist_id" and resolver.playlist_id:
@@ -166,20 +177,30 @@ class PlaylistMirrorModule(SyncModule):
                     TargetPlaylist(id=playlist["id"], name=playlist["name"], resolver=resolver)
                 )
             elif resolver.kind == "playlist_name" and resolver.name:
-                playlist = service.ensure_playlist(
+                cache_key = f"name::{resolver.name.strip().lower()}"
+                playlist = self._get_or_create_playlist(
+                    service,
                     resolver.name,
                     public=resolver.public,
                     description=resolver.description,
+                    cache_key=cache_key,
+                    cache_store=cache_store,
+                    state=context.state,
                 )
                 targets.append(
                     TargetPlaylist(id=playlist["id"], name=playlist["name"], resolver=resolver)
                 )
             elif resolver.kind == "playlist_pattern" and resolver.pattern:
                 playlist_name = service.format_pattern(resolver.pattern)
-                playlist = service.ensure_playlist(
+                cache_key = f"pattern::{resolver.pattern}::{playlist_name.strip().lower()}"
+                playlist = self._get_or_create_playlist(
+                    service,
                     playlist_name,
                     public=resolver.public,
                     description=resolver.description,
+                    cache_key=cache_key,
+                    cache_store=cache_store,
+                    state=context.state,
                 )
                 targets.append(
                     TargetPlaylist(id=playlist["id"], name=playlist["name"], resolver=resolver)
@@ -188,13 +209,48 @@ class PlaylistMirrorModule(SyncModule):
                 raise ValueError(f"Unsupported target resolver: {resolver.kind}")
         return targets
 
+    def _get_or_create_playlist(
+        self,
+        service: SpotifyService,
+        name: str,
+        *,
+        public: bool,
+        description: Optional[str],
+        cache_key: str,
+        cache_store: Dict[str, str],
+        state,
+    ) -> dict:
+        cached_id = cache_store.get(cache_key)
+        if cached_id:
+            try:
+                playlist = service.client.playlist(cached_id)
+                return playlist
+            except Exception:
+                cache_store.pop(cache_key, None)
+
+        playlist = service.ensure_playlist(
+            name,
+            public=public,
+            description=description,
+        )
+        cache_store[cache_key] = playlist["id"]
+        if state is not None:
+            state._dirty = True
+        return playlist
+
     def _filter_new_tracks(
         self,
         source_track_ids: List[str],
         context: SyncContext,
+        *,
+        direction: Optional[str] = None,
     ) -> List[str]:
         state = context.state
+        normalised_direction = (direction or "oldest").lower()
+
         if not state or not state.last_processed_track_id:
+            if normalised_direction == "newest":
+                return list(reversed(source_track_ids))
             return source_track_ids
 
         last_id = state.last_processed_track_id
@@ -207,7 +263,10 @@ class PlaylistMirrorModule(SyncModule):
                 message="Previous cursor not found; processing all tracks.",
             )
             return source_track_ids
-        # return tracks after the known cursor position
+        if normalised_direction == "newest":
+            # list is newest-first; new tracks appear before the cursor.
+            # Return oldest-to-newest order for consistent playlist appends.
+            return list(reversed(source_track_ids[:index]))
         return source_track_ids[index + 1 :]
 
     def _sync_target(

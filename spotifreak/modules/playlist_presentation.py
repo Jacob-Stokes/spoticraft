@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import base64
 import random
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import re
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Tuple
 
 import requests
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -70,7 +71,7 @@ class PhasesOptions(BaseModel):
 
 class PlaylistPresentationOptions(BaseModel):
     playlist: PlaylistResolverConfig
-    interval_seconds: Optional[int] = Field(default=None, ge=60)
+    interval_seconds: Optional[int] = Field(default=None, ge=1)
     phases: Optional[PhasesOptions] = None
     cover: FeatureOptions = Field(default_factory=FeatureOptions)
     title: FeatureOptions = Field(default_factory=FeatureOptions)
@@ -115,80 +116,104 @@ class PlaylistPresentationModule(SyncModule):
 
         now = datetime.now(timezone.utc)
         presentation_state = state.data.setdefault("playlist_presentation", {})
-        last_update_iso = presentation_state.get("last_updated_at")
         effective_interval = self._determine_interval_seconds()
 
-        if last_update_iso:
-            try:
-                last_update = datetime.fromisoformat(last_update_iso)
-            except ValueError:
-                last_update = None
-            if last_update:
-                elapsed = (now - last_update).total_seconds()
-                if elapsed < effective_interval:
-                    logger.info(
-                        "presentation.interval_skip",
-                        interval=effective_interval,
-                        remaining=effective_interval - int(elapsed),
-                    )
-                    self._update_summary(status="skipped_interval", phase=presentation_state.get("last_phase"))
-                    return
+        if not self._should_execute_now(presentation_state, now, effective_interval):
+            remaining = self._remaining_interval(presentation_state, now, effective_interval)
+            logger.info(
+                "presentation.interval_skip",
+                interval=effective_interval,
+                remaining=remaining,
+            )
+            self._update_summary(status="skipped_interval", phase=presentation_state.get("last_phase"))
+            return
 
         phase = self._determine_phase(now, presentation_state, state, context)
         presentation_state["last_phase"] = phase
+        presentation_state["global_run_count"] = presentation_state.get("global_run_count", 0) + 1
 
-        feature_state = presentation_state.setdefault("features", {})
+        rng = random.Random()
+        if self.options.random_seed:
+            rng.seed(f"{self.options.random_seed}:{presentation_state['global_run_count']}")
+
+        features_state = presentation_state.setdefault("features", {})
+        groups_state = presentation_state.setdefault("groups", {})
+        cache_state = presentation_state.setdefault("source_cache", {})
 
         updates_applied = False
+        state_dirty = False
 
-        cover_path = None
-        if self.options.cover.enabled:
-            cover_path = self._select_asset(self.options.cover, feature_state.setdefault("cover", {}), phase)
-            if cover_path:
-                try:
-                    image_b64 = self._encode_image(cover_path, context)
-                    service.upload_playlist_cover(playlist_id, image_b64)
-                    updates_applied = True
-                    logger.info("presentation.cover_updated", path=str(cover_path), phase=phase)
-                except Exception as exc:  # pragma: no cover - network/filesystem issues
-                    logger.error("presentation.cover_failed", error=str(exc), path=str(cover_path))
+        cover_outcome = self._determine_feature_outcome(
+            feature_name="cover",
+            options=self.options.cover,
+            presentation_state=presentation_state,
+            features_state=features_state,
+            groups_state=groups_state,
+            cache_state=cache_state,
+            phase=phase,
+            now=now,
+            context=context,
+            rng=rng,
+        )
 
-        title_value = None
-        if self.options.title.enabled:
-            title_value = self._select_asset(
-                self.options.title,
-                feature_state.setdefault("title", {}),
-                phase,
-            )
+        if cover_outcome.should_apply and cover_outcome.value:
+            try:
+                image_b64 = self._encode_image(cover_outcome.value, context)
+                service.upload_playlist_cover(playlist_id, image_b64)
+                updates_applied = True
+                state_dirty = True
+                logger.info("presentation.cover_updated", path=str(cover_outcome.value), phase=phase)
+            except Exception as exc:  # pragma: no cover - network/filesystem issues
+                if not self._handle_failure("cover", self.options.cover, features_state.get("cover", {}), phase, exc, logger):
+                    raise
+        elif cover_outcome.reason:
+            self._update_summary(cover_status="skip", cover_reason=cover_outcome.reason, phase=phase)
 
-        description_value = None
-        if self.options.description.enabled:
-            description_assets = self._assets_for_phase(self.options.description.assets, phase)
-            dynamic = []
-            if self.options.description.use_dynamic:
-                templates = self.options.description.dynamic_templates or self._default_description_templates()
-                dynamic = self._render_dynamic_descriptions(templates)
-            combined = description_assets + dynamic
-            if combined:
-                desc_options = DescriptionOptions(
-                    enabled=True,
-                    selection=self.options.description.selection,
-                    assets={phase: combined},
-                )
-                description_value = self._select_asset(
-                    desc_options,
-                    feature_state.setdefault("description", {}),
-                    phase,
-                )
+        title_outcome = self._determine_feature_outcome(
+            feature_name="title",
+            options=self.options.title,
+            presentation_state=presentation_state,
+            features_state=features_state,
+            groups_state=groups_state,
+            cache_state=cache_state,
+            phase=phase,
+            now=now,
+            context=context,
+            rng=rng,
+        )
 
-        details_update = {}
-        last_detail_state = feature_state.setdefault("details", {})
-        if title_value and title_value != last_detail_state.get("title"):
-            details_update["name"] = title_value
-            last_detail_state["title"] = title_value
-        if description_value and description_value != last_detail_state.get("description"):
-            details_update["description"] = description_value
-            last_detail_state["description"] = description_value
+        description_outcome = self._determine_feature_outcome(
+            feature_name="description",
+            options=self.options.description,
+            presentation_state=presentation_state,
+            features_state=features_state,
+            groups_state=groups_state,
+            cache_state=cache_state,
+            phase=phase,
+            now=now,
+            context=context,
+            rng=rng,
+            is_description=True,
+        )
+
+        details_update: Dict[str, str] = {}
+        last_detail_state = features_state.setdefault("details", {})
+
+        if title_outcome.should_apply and title_outcome.value:
+            if title_outcome.value != last_detail_state.get("title"):
+                details_update["name"] = title_outcome.value
+                last_detail_state["title"] = title_outcome.value
+                state_dirty = True
+        elif title_outcome.reason:
+            self._update_summary(title_status="skip", title_reason=title_outcome.reason, phase=phase)
+
+        if description_outcome.should_apply and description_outcome.value:
+            if description_outcome.value != last_detail_state.get("description"):
+                details_update["description"] = description_outcome.value
+                last_detail_state["description"] = description_outcome.value
+                state_dirty = True
+        elif description_outcome.reason:
+            self._update_summary(description_status="skip", description_reason=description_outcome.reason, phase=phase)
 
         if details_update:
             try:
@@ -200,14 +225,18 @@ class PlaylistPresentationModule(SyncModule):
                     phase=phase,
                 )
             except Exception as exc:  # pragma: no cover - API failure
-                logger.error("presentation.details_failed", error=str(exc))
+                if not self._handle_failure("details", self.options.title, features_state.get("title", {}), phase, exc, logger):
+                    logger.error("presentation.details_failed", error=str(exc))
 
         if updates_applied:
             presentation_state["last_updated_at"] = now.isoformat()
-            state._dirty = True
-            self._update_summary(status="updated", phase=phase, fields=list(details_update.keys()))
+            state_dirty = True
+            self._update_summary(status="updated", phase=phase, fields=list(details_update.keys()) or ["cover"])
         else:
             self._update_summary(status="noop", phase=phase)
+
+        if state_dirty:
+            state._dirty = True
 
     # ------------------------------------------------------------------
     # Helper methods
@@ -348,41 +377,437 @@ class PlaylistPresentationModule(SyncModule):
                 return name
         return sorted_items[-1][0]
 
-    def _select_asset(self, options: FeatureOptions, feature_state: dict, phase: str) -> Optional[str]:
-        assets = self._assets_for_phase(options.assets, phase)
-        if not assets:
+    def _should_execute_now(self, presentation_state: dict, now: datetime, interval: int) -> bool:
+        last_iso = presentation_state.get("last_updated_at")
+        if not last_iso:
+            return True
+        try:
+            last_run = datetime.fromisoformat(last_iso)
+        except ValueError:
+            return True
+        elapsed = (now - last_run).total_seconds()
+        return elapsed >= interval
+
+    def _remaining_interval(self, presentation_state: dict, now: datetime, interval: int) -> int:
+        last_iso = presentation_state.get("last_updated_at")
+        if not last_iso:
+            return 0
+        try:
+            last_run = datetime.fromisoformat(last_iso)
+        except ValueError:
+            return 0
+        remaining = interval - (now - last_run).total_seconds()
+        return max(int(remaining), 0)
+
+    def _determine_feature_outcome(
+        self,
+        *,
+        feature_name: str,
+        options: FeatureOptions,
+        presentation_state: dict,
+        features_state: dict,
+        groups_state: dict,
+        cache_state: dict,
+        phase: str,
+        now: datetime,
+        context: SyncContext,
+        rng: random.Random,
+        is_description: bool = False,
+    ) -> "FeatureOutcome":
+        if not options.enabled:
+            return FeatureOutcome(False, None, "disabled")
+
+        feature_state = self._resolve_feature_state(feature_name, options, features_state, groups_state)
+        feature_state["run_count"] = feature_state.get("run_count", 0) + 1
+
+        if not self._within_feature_cadence(options.cadence, feature_state, phase, now, presentation_state):
+            return FeatureOutcome(False, None, "cadence_skip")
+
+        candidates, bucket_map = self._collect_candidates(
+            feature_name=feature_name,
+            options=options,
+            phase=phase,
+            context=context,
+            cache_state=cache_state,
+            rng=rng,
+        )
+
+        if is_description and options.enabled:
+            if isinstance(options, DescriptionOptions) and options.use_dynamic:
+                templates = options.dynamic_templates or self._default_description_templates()
+                for text in self._render_dynamic_descriptions(templates):
+                    candidates.append(AssetCandidate(value=text, weight=1.0, source_id="dynamic"))
+
+        if not candidates:
+            if options.fallback_asset:
+                return FeatureOutcome(True, options.fallback_asset, "fallback_asset")
+            return FeatureOutcome(False, None, "no_assets")
+
+        outcome = self._select_candidate(
+            feature_name=feature_name,
+            options=options,
+            feature_state=feature_state,
+            groups_state=groups_state,
+            presentation_state=presentation_state,
+            candidates=candidates,
+            bucket_map=bucket_map,
+            phase=phase,
+            rng=rng,
+        )
+
+        if not outcome:
+            if options.fallback_asset:
+                return FeatureOutcome(True, options.fallback_asset, "fallback_asset")
+            return FeatureOutcome(False, None, "selection_failed")
+
+        feature_state["last_value"] = outcome
+        feature_state.setdefault("history", []).append(outcome)
+        self._trim_history(feature_state["history"], options.selection.dedupe_window)
+
+        return FeatureOutcome(True, outcome)
+
+    def _resolve_feature_state(
+        self,
+        feature_name: str,
+        options: FeatureOptions,
+        features_state: dict,
+        groups_state: dict,
+    ) -> dict:
+        group_key = options.selection.group_key
+        if not group_key:
+            return features_state.setdefault(feature_name, {})
+
+        group_state = groups_state.setdefault(group_key, {})
+        state_dict = group_state.setdefault("state", {})
+        features_state[feature_name] = state_dict
+        return state_dict
+
+    def _within_feature_cadence(
+        self,
+        cadence: FeatureCadence,
+        feature_state: dict,
+        phase: str,
+        now: datetime,
+        presentation_state: dict,
+    ) -> bool:
+        global_count = presentation_state.get("global_run_count", 1)
+        if cadence.multiplier > 1 and global_count % cadence.multiplier != 0:
+            return False
+
+        phase_intervals = cadence.phase_overrides or {}
+        if phase in phase_intervals:
+            last_iso = feature_state.get("last_value_at")
+            if last_iso:
+                try:
+                    last_time = datetime.fromisoformat(last_iso)
+                except ValueError:
+                    return True
+                elapsed = (now - last_time).total_seconds()
+                if elapsed < phase_intervals[phase]:
+                    return False
+        return True
+
+    def _collect_candidates(
+        self,
+        *,
+        feature_name: str,
+        options: FeatureOptions,
+        phase: str,
+        context: SyncContext,
+        cache_state: dict,
+        rng: random.Random,
+    ) -> Tuple[List[AssetCandidate], Dict[str, List[str]]]:
+        phase_sources = list(options.sources.get(phase, []))
+        default_sources = options.sources.get("default", [])
+        if phase != "default":
+            phase_sources.extend(default_sources)
+
+        candidates: List[AssetCandidate] = []
+        buckets: Dict[str, List[str]] = {}
+        fallbacks: List[AssetCandidate] = []
+
+        for index, source in enumerate(phase_sources):
+            source_id = f"{feature_name}:{phase}:{index}:{source.type}:{source.path or '-'}"
+            items = self._load_source_assets(source_id, source, context, cache_state, rng)
+            if not items:
+                continue
+            if source.shuffle_on_load and len(items) > 1:
+                rng.shuffle(items)
+            if source.max_items:
+                items = items[: source.max_items]
+
+            if source.type == "fallback":
+                fallbacks.extend(AssetCandidate(value=item, weight=source.weight, source_id=source_id) for item in items)
+                continue
+
+            bucket = buckets.setdefault(source_id, [])
+            for item in items:
+                bucket.append(item)
+                candidates.append(AssetCandidate(value=item, weight=source.weight, source_id=source_id))
+
+        if not candidates:
+            if fallbacks:
+                return fallbacks, {candidate.source_id: [candidate.value] for candidate in fallbacks}
+            if options.fallback_asset:
+                candidate = AssetCandidate(value=options.fallback_asset, source_id=f"{feature_name}:fallback")
+                return [candidate], {candidate.source_id: [candidate.value]}
+
+        return candidates, buckets
+
+    def _load_source_assets(
+        self,
+        cache_key: str,
+        source: AssetSource,
+        context: SyncContext,
+        cache_state: dict,
+        rng: random.Random,
+    ) -> List[str]:
+        if source.type == "list":
+            return [str(item) for item in source.items]
+
+        if source.type == "folder":
+            cached = cache_state.get(cache_key)
+            now_ts = time.time()
+            if cached and source.cache_ttl_seconds > 0:
+                if (now_ts - cached.get("timestamp", 0)) <= source.cache_ttl_seconds:
+                    return list(cached.get("items", []))
+
+            folder_path = Path(source.path or "").expanduser()
+            base_dir = context.paths.base_dir if context.paths else Path.cwd()
+            if not folder_path.is_absolute():
+                folder_path = base_dir / folder_path
+
+            pattern = source.pattern or "*"
+            paths: List[str] = []
+            if folder_path.is_dir():
+                iterator: Iterable[Path]
+                if source.recursive:
+                    iterator = folder_path.rglob(pattern)
+                else:
+                    iterator = folder_path.glob(pattern)
+                for child in iterator:
+                    if not child.is_file():
+                        continue
+                    try:
+                        relative = child.relative_to(base_dir)
+                        paths.append(str(relative))
+                    except ValueError:
+                        paths.append(str(child))
+
+            cache_state[cache_key] = {"timestamp": now_ts, "items": list(paths)}
+            return paths
+
+        if source.type == "fallback":
+            return [str(item) for item in source.items]
+
+        return []
+
+    def _select_candidate(
+        self,
+        *,
+        feature_name: str,
+        options: FeatureOptions,
+        feature_state: dict,
+        groups_state: dict,
+        presentation_state: dict,
+        candidates: List[AssetCandidate],
+        bucket_map: Dict[str, List[str]],
+        phase: str,
+        rng: random.Random,
+    ) -> Optional[str]:
+        group_key = options.selection.group_key
+        group_state: Optional[dict] = None
+        if group_key:
+            group_state = groups_state.setdefault(group_key, {})
+            run_marker = presentation_state.get("global_run_count", 0)
+            cache = group_state.setdefault("cache", {})
+            cached = cache.get((phase, run_marker))
+            if cached is not None:
+                return cached
+
+        selection_mode = options.selection.mode
+        value: Optional[str] = None
+
+        if selection_mode == "sequential":
+            value = self._select_sequential(candidates, feature_state, options.selection, rng)
+        elif selection_mode == "random":
+            value = self._select_random(candidates, feature_state, options.selection, rng)
+        elif selection_mode == "weighted_random":
+            value = self._select_weighted_random(candidates, feature_state, options.selection, rng)
+        elif selection_mode == "round_robin":
+            value = self._select_round_robin(bucket_map, candidates, feature_state)
+
+        if value is None:
             return None
 
-        if options.selection == "random":
-            candidate = random.choice(assets)
-            if len(assets) > 1:
-                last = feature_state.get("last")
-                attempts = 0
-                while candidate == last and attempts < 5:
-                    candidate = random.choice(assets)
-                    attempts += 1
+        history = feature_state.setdefault("history", [])
+        if options.selection.dedupe_window > 0 and value in history[-options.selection.dedupe_window :]:
+            # attempt to find alternative for random modes
+            if selection_mode in {"random", "weighted_random"}:
+                alt = self._select_random_alternative(candidates, history, options.selection.dedupe_window, rng)
+                if alt:
+                    value = alt
+            elif selection_mode == "sequential":
+                value = self._select_sequential(candidates, feature_state, options.selection, rng, force_next=True)
+
+        if group_key and group_state is not None:
+            cache = group_state.setdefault("cache", {})
+            cache[(phase, presentation_state.get("global_run_count", 0))] = value
+
+        feature_state["last_value_at"] = datetime.now(timezone.utc).isoformat()
+        return value
+
+    @staticmethod
+    def _trim_history(history: List[str], window: int) -> None:
+        if window <= 0:
+            history.clear()
+            return
+        if len(history) > window * 2:
+            del history[:-window * 2]
+
+    def _select_sequential(
+        self,
+        candidates: Sequence[AssetCandidate],
+        feature_state: dict,
+        selection: FeatureSelection,
+        rng: random.Random,
+        *,
+        force_next: bool = False,
+    ) -> Optional[str]:
+        if not candidates:
+            return None
+
+        values = [candidate.value for candidate in candidates]
+        cursor = feature_state.get("cursor", 0)
+        direction = feature_state.get("direction", 1)
+
+        if selection.restart_policy == "random_restart" and cursor >= len(values):
+            cursor = rng.randrange(len(values))
+        elif selection.restart_policy == "bounce":
+            if cursor >= len(values) or cursor < 0:
+                direction = -direction
+                cursor = max(0, min(len(values) - 1, cursor + direction))
         else:
-            indices = feature_state.setdefault("indices", {})
-            current = indices.get(phase, 0)
-            candidate = assets[current % len(assets)]
-            indices[phase] = current + 1
+            cursor = cursor % len(values)
 
-        if candidate == feature_state.get("last"):
+        if force_next:
+            cursor = (cursor + 1) % len(values)
+
+        feature_state["cursor"] = cursor + direction
+        feature_state["direction"] = direction
+        return values[cursor]
+
+    def _select_random(
+        self,
+        candidates: Sequence[AssetCandidate],
+        feature_state: dict,
+        selection: FeatureSelection,
+        rng: random.Random,
+    ) -> Optional[str]:
+        if not candidates:
             return None
+        values = [candidate.value for candidate in candidates]
+        choice = rng.choice(values)
+        if selection.dedupe_window > 0:
+            history = feature_state.setdefault("history", [])
+            attempts = 0
+            while choice in history[-selection.dedupe_window :] and attempts < 5:
+                choice = rng.choice(values)
+                attempts += 1
+        return choice
 
-        feature_state["last"] = candidate
-        return candidate
+    def _select_random_alternative(
+        self,
+        candidates: Sequence[AssetCandidate],
+        history: Sequence[str],
+        window: int,
+        rng: random.Random,
+    ) -> Optional[str]:
+        values = [candidate.value for candidate in candidates if candidate.value not in history[-window:]]
+        if not values:
+            return None
+        return rng.choice(values)
 
-    def _assets_for_phase(self, assets: Dict[str, List[str]], phase: str) -> List[str]:
-        if phase in assets and assets[phase]:
-            return assets[phase]
-        if "default" in assets and assets["default"]:
-            return assets["default"]
-        # flatten remaining phases
-        flattened: List[str] = []
-        for values in assets.values():
-            flattened.extend(values)
-        return flattened
+    def _select_weighted_random(
+        self,
+        candidates: Sequence[AssetCandidate],
+        feature_state: dict,
+        selection: FeatureSelection,
+        rng: random.Random,
+    ) -> Optional[str]:
+        if not candidates:
+            return None
+        weights = [candidate.weight for candidate in candidates]
+        total = sum(weights)
+        if total <= 0:
+            return self._select_random(candidates, feature_state, selection, rng)
+        pick = rng.random() * total
+        upto = 0.0
+        for candidate, weight in zip(candidates, weights):
+            upto += weight
+            if pick <= upto:
+                return candidate.value
+        return candidates[-1].value
+
+    def _select_round_robin(
+        self,
+        bucket_map: Dict[str, List[str]],
+        candidates: Sequence[AssetCandidate],
+        feature_state: dict,
+    ) -> Optional[str]:
+        if not candidates:
+            return None
+        if not bucket_map:
+            return candidates[feature_state.get("cursor", 0) % len(candidates)].value
+
+        current_cycle = feature_state.get("round_robin_cycle")
+        new_cycle = list(bucket_map.keys())
+        if current_cycle != new_cycle:
+            feature_state["round_robin_cycle"] = new_cycle
+            feature_state["round_robin_pointer"] = 0
+            feature_state["round_robin_indices"] = {}
+        cycle = feature_state.setdefault("round_robin_cycle", new_cycle)
+        pointer = feature_state.get("round_robin_pointer", 0)
+        for _ in range(len(cycle)):
+            source_id = cycle[pointer % len(cycle)]
+            entries = bucket_map.get(source_id, [])
+            index_map = feature_state.setdefault("round_robin_indices", {})
+            idx = index_map.get(source_id, 0)
+            if entries:
+                value = entries[idx % len(entries)]
+                index_map[source_id] = idx + 1
+                feature_state["round_robin_pointer"] = pointer + 1
+                return value
+            pointer += 1
+        return candidates[0].value
+
+    def _handle_failure(
+        self,
+        feature_name: str,
+        options: FeatureOptions,
+        feature_state: dict,
+        phase: str,
+        exc: Exception,
+        logger,
+    ) -> bool:
+        mode = options.failure_mode
+        if mode == "reuse_last":
+            last_value = feature_state.get("last_value")
+            if last_value:
+                logger.warning(
+                    "presentation.reuse_last", feature=feature_name, phase=phase, error=str(exc)
+                )
+                return True
+            mode = "skip"
+
+        if mode == "skip":
+            logger.warning(
+                "presentation.failure_skipped", feature=feature_name, phase=phase, error=str(exc)
+            )
+            return True
+
+        return False
+
 
     def _encode_image(self, raw_path: str, context: SyncContext) -> str:
         path = Path(raw_path).expanduser()

@@ -1,0 +1,96 @@
+id: playlist_presentation_advanced
+name: Playlist Presentation (Advanced)
+description: Demonstrates folder-based sources, grouping, and cadence controls for cover/title/description rotation
+content: |
+  id: advanced-presentation
+  type: playlist_presentation
+  description: Cycle cover art, titles, and descriptions with folder sources and grouped selection
+  schedule:
+    interval: 30s
+  options:
+    interval_seconds: 10
+    random_seed: moodboard-seed
+    playlist:
+      kind: playlist_name
+      name: Moodboard Advanced
+    phases:
+      mode: custom
+      custom:
+        - name: dawn
+          start: "05:00"
+        - name: day
+          start: "09:00"
+        - name: dusk
+          start: "18:00"
+        - name: night
+          start: "21:00"
+    cover:
+      enabled: true
+      failure_mode: reuse_last
+      cadence:
+        multiplier: 1
+        phase_overrides:
+          night: 600
+      selection:
+        mode: weighted_random
+        dedupe_window: 2
+        group_key: presentation-cycle
+      sources:
+        default:
+          - type: folder
+            path: assets/covers/daytime
+            pattern: "*.jpg"
+            shuffle_on_load: true
+            weight: 2
+            cache_ttl_seconds: 300
+          - type: folder
+            path: assets/covers/night
+            pattern: "*.jpg"
+            recursive: true
+            weight: 1
+            cache_ttl_seconds: 600
+          - type: fallback
+            items:
+              - assets/fallbacks/default-cover.jpg
+    title:
+      enabled: true
+      cadence:
+        multiplier: 3
+      selection:
+        mode: sequential
+        restart_policy: bounce
+        group_key: presentation-cycle
+      sources:
+        default:
+          - type: list
+            items:
+              - Morning Motion
+              - Daylight Drift
+              - Twilight Tones
+              - Midnight Mirror
+    description:
+      enabled: true
+      use_dynamic: true
+      failure_mode: skip
+      cadence:
+        multiplier: 6
+      selection:
+        mode: random
+        dedupe_window: 3
+        group_key: presentation-cycle
+      sources:
+        default:
+          - type: folder
+            path: assets/descriptions/static
+            pattern: "*.txt"
+            cache_ttl_seconds: 120
+        dusk:
+          - type: list
+            items:
+              - Golden hour soundtrack
+              - Sunset lounge session
+      dynamic_templates:
+        - Refreshed {time} • {weekday}
+        - Curated for {weekday} evenings
+        - Late-night vibe check at {time}
+      fallback_asset: Night mode in rotation
