@@ -9,6 +9,7 @@ from .playlist_mirror import PlaylistMirrorModule
 from .playlist_retention import PlaylistRetentionModule
 from .lastfm_top_tracks import LastFmTopTracksModule
 from .playlist_presentation import PlaylistPresentationModule
+from .playlist_cache import PlaylistCacheModule
 
 __all__ = [
     "SyncContext",
@@ -46,3 +47,4 @@ default_registry.register("playlist_mirror", PlaylistMirrorModule)
 default_registry.register("playlist_retention", PlaylistRetentionModule)
 default_registry.register("lastfm_top_tracks", LastFmTopTracksModule)
 default_registry.register("playlist_presentation", PlaylistPresentationModule)
+default_registry.register("playlist_cache", PlaylistCacheModule)

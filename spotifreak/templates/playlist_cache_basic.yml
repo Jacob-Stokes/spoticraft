@@ -1,0 +1,14 @@
+id: playlist_cache_basic
+name: Playlist Cache (Recommended)
+description: Refresh playlist metadata on a regular cadence to improve sync performance
+content: |
+  id: playlist-cache
+  type: playlist_cache
+  description: Refresh cached Spotify playlist metadata for other syncs to consume
+  schedule:
+    interval: 30m
+  state_file: playlist-cache.json
+  options:
+    include_public: true
+    include_private: true
+    include_collaborative: true

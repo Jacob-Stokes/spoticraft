@@ -76,6 +76,7 @@ class PlaylistPresentationOptions(BaseModel):
     cover: FeatureOptions = Field(default_factory=FeatureOptions)
     title: FeatureOptions = Field(default_factory=FeatureOptions)
     description: DescriptionOptions = Field(default_factory=DescriptionOptions)
+    random_seed: Optional[str] = None
 
 
 @dataclass

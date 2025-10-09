@@ -33,6 +33,12 @@ class SpotifyService:
         self.client = client
         self._current_user: Optional[dict] = None
         self._playlists_cache: Optional[List[dict]] = None
+        self._shared_playlist_cache: Optional[dict] = None
+
+    def set_shared_playlist_cache(self, cache: Optional[dict]) -> None:
+        """Inject shared playlist cache produced by playlist_cache sync."""
+
+        self._shared_playlist_cache = cache
 
     def _execute(self, func, *args, **kwargs):
         try:
@@ -90,12 +96,25 @@ class SpotifyService:
 
     def find_playlist_by_name(self, name: str) -> Optional[dict]:
         name_lower = name.strip().lower()
+        if self._shared_playlist_cache:
+            entry = self._shared_playlist_cache.get("by_name", {}).get(name_lower)
+            if entry:
+                return {
+                    "id": entry.get("id"),
+                    "name": entry.get("name"),
+                    "uri": entry.get("uri"),
+                }
         if self._playlists_cache is None:
             self._playlists_cache = self._fetch_all_playlists()
         for playlist in self._playlists_cache:
             if playlist["name"].strip().lower() == name_lower:
                 return playlist
         return None
+
+    def list_all_playlists(self) -> List[dict]:
+        """Return a fresh list of all user playlists."""
+
+        return self._fetch_all_playlists()
 
     # ------------------------------------------------------------------
     # Track fetching helpers

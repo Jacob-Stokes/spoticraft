@@ -24,6 +24,7 @@ class SyncContext:
     state: Optional["SyncState"] = None
     global_config: Optional["GlobalConfig"] = None
     paths: Optional[ConfigPaths] = None
+    shared_cache: Optional[dict] = None
 
 
 class SyncModule(Protocol):

@@ -11,7 +11,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
@@ -46,6 +46,9 @@ class Supervisor:
     _jobs_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _ipc_socket: Optional[Path] = field(default=None, init=False, repr=False)
     _sync_index: Dict[str, SyncConfig] = field(default_factory=dict, init=False, repr=False)
+    _playlist_cache_syncs: List[SyncConfig] = field(default_factory=list, init=False, repr=False)
+    _shared_playlist_cache: Optional[dict] = field(default=None, init=False, repr=False)
+    _playlist_cache_mtimes: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._timezone, self._timezone_source = self._resolve_timezone(self.config.runtime.timezone)
@@ -53,6 +56,7 @@ class Supervisor:
         self._scheduler = self._create_scheduler()
         self._sync_index = {sync.id: sync for sync in self.syncs}
         self._ipc_socket = Path(self.config.supervisor.ipc_socket).expanduser()
+        self._playlist_cache_syncs = [sync for sync in self.syncs if sync.type == "playlist_cache"]
 
     # ------------------------------------------------------------------
     # Public API
@@ -209,6 +213,8 @@ class Supervisor:
         state_path = state_path_for_sync(self.paths, self.config, sync)
         sync_state = load_state(state_path)
 
+        shared_cache = self._refresh_shared_playlist_cache()
+
         run_started = datetime.now(timezone.utc)
         run_id = run_started.isoformat()
         sync_state.begin_run(run_id, started_at=run_id)
@@ -236,6 +242,8 @@ class Supervisor:
             spotify_factory = SpotifyClientFactory(self.config)
             spotify_client = spotify_factory.get_client()
             spotify_service = SpotifyService(spotify_client)
+            if shared_cache:
+                spotify_service.set_shared_playlist_cache(shared_cache)
         except Exception as exc:  # pragma: no cover - depends on runtime creds
             error_message = str(exc)
             module_logger.error(
@@ -257,6 +265,7 @@ class Supervisor:
             state=sync_state,
             global_config=self.config,
             paths=self.paths,
+            shared_cache=shared_cache,
         )
 
         details: Optional[Dict[str, object]] = None
@@ -292,6 +301,8 @@ class Supervisor:
             )
         finally:
             sync_state.save()
+            if sync.type == "playlist_cache":
+                self._refresh_shared_playlist_cache(force=True)
 
     @staticmethod
     def _run_details(
@@ -476,3 +487,70 @@ class Supervisor:
                 }
             )
         return jobs
+
+    def _refresh_shared_playlist_cache(self, *, force: bool = False) -> Optional[dict]:
+        if not self._playlist_cache_syncs:
+            self._shared_playlist_cache = None
+            return None
+
+        best_cache: Optional[Tuple[datetime, dict]] = None
+
+        for sync in self._playlist_cache_syncs:
+            path = state_path_for_sync(self.paths, self.config, sync)
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+
+            mtime = stat.st_mtime
+            cache_key = str(path)
+            if not force and self._shared_playlist_cache is not None:
+                last_mtime = self._playlist_cache_mtimes.get(cache_key)
+                if last_mtime is not None and last_mtime >= mtime:
+                    continue
+
+            state = load_state(path)
+            data = state.data or {}
+            playlists = data.get("playlists")
+            if not isinstance(playlists, list):
+                continue
+
+            refreshed_raw = data.get("last_refreshed")
+            try:
+                refreshed_at = datetime.fromisoformat(refreshed_raw) if refreshed_raw else None
+            except ValueError:
+                refreshed_at = None
+
+            if refreshed_at is None:
+                refreshed_at = datetime.fromtimestamp(mtime, tz=timezone.utc)
+
+            if best_cache is None or refreshed_at > best_cache[0]:
+                best_cache = (refreshed_at, {
+                    "playlists": playlists,
+                    "last_refreshed": refreshed_at.isoformat(),
+                })
+            self._playlist_cache_mtimes[cache_key] = mtime
+
+        if best_cache is None:
+            return self._shared_playlist_cache
+
+        refreshed_at, payload = best_cache
+        playlists = payload.get("playlists", [])
+        by_name: Dict[str, dict] = {}
+        by_id: Dict[str, dict] = {}
+        for entry in playlists:
+            if not isinstance(entry, dict):
+                continue
+            playlist_id = entry.get("id")
+            name = entry.get("name", "")
+            if playlist_id:
+                by_id[str(playlist_id)] = entry
+            if isinstance(name, str):
+                by_name[name.strip().lower()] = entry
+        self._shared_playlist_cache = {
+            "last_refreshed": refreshed_at.isoformat(),
+            "playlists": playlists,
+            "by_name": by_name,
+            "by_id": by_id,
+        }
+        return self._shared_playlist_cache
