@@ -13,3 +13,4 @@ new-repo/
 docker/logs/
 docker/state/
 docker/config/
+ARCHITECTURE_NOTES.md
