@@ -19,6 +19,7 @@ const newSyncButton = document.getElementById("new-sync-button");
 const assetsTable = document.getElementById("assets-table");
 const assetsTableBody = assetsTable ? assetsTable.querySelector("tbody") : null;
 const assetsEmptyState = document.getElementById("assets-empty");
+const assetFolderSelect = document.getElementById("asset-folder-select");
 const uploadAssetButton = document.getElementById("upload-asset-button");
 const assetFileInput = document.getElementById("asset-file-input");
 const newFolderButton = document.getElementById("new-folder-button");
@@ -61,6 +62,7 @@ const ASSETS_UI_AVAILABLE = Boolean(
   assetsTable &&
   assetsTableBody &&
   assetsEmptyState &&
+  assetFolderSelect &&
   newFolderButton &&
   uploadAssetButton &&
   assetFileInput,
@@ -77,6 +79,7 @@ const state = {
   filteredConfigs: [],
   templates: [],
   assets: [],
+  assetUploadTarget: "",
   logs: [],
   assetFolders: {},
   view: {
@@ -128,6 +131,14 @@ function loadThemePreference() {
     return stored;
   }
   return "system";
+}
+
+function encodeAssetPath(path) {
+  return path
+    .split("/")
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join("/");
 }
 
 function resolveTheme(mode) {
@@ -598,8 +609,10 @@ async function loadAssets() {
 async function uploadAsset(file) {
   const formData = new FormData();
   formData.append("file", file, file.name);
+  const target = state.assetUploadTarget || "";
   try {
-    await fetchJson("/config/assets", {
+    const query = target ? `?target_dir=${encodeURIComponent(target)}` : "";
+    await fetchJson(`/config/assets${query}`, {
       method: "POST",
       body: formData,
     });
@@ -610,9 +623,18 @@ async function uploadAsset(file) {
   }
 }
 
+async function moveAsset(source, destination, overwrite = false) {
+  const payload = { source, destination, overwrite };
+  await fetchJson("/config/assets/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 async function createAssetFolder(path) {
   const payload = { path };
-  await fetchJson("/config/assets/folders", {
+  return fetchJson("/config/assets/folders", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -625,8 +647,29 @@ async function deleteAsset(name) {
     return;
   }
   try {
-    await fetchJson(`/config/assets/${encodeURIComponent(name)}`, { method: "DELETE" });
+    const encoded = encodeAssetPath(name);
+    await fetchJson(`/config/assets/${encoded}`, { method: "DELETE" });
     showToast(`Deleted '${name}'`, "success", 3000);
+    await loadAssets();
+  } catch (error) {
+    showToast(`Delete failed: ${error.message}`, "error", 6000);
+  }
+}
+
+async function deleteFolder(path) {
+  const confirmed = window.confirm(
+    `Delete folder '${path}' and all contents? This cannot be undone.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+  try {
+    const encoded = encodeAssetPath(path);
+    await fetchJson(`/config/assets/${encoded}?recursive=true`, { method: "DELETE" });
+    showToast(`Deleted folder '${path}'`, "success", 3000);
+    if (state.assetUploadTarget && (state.assetUploadTarget === path || state.assetUploadTarget.startsWith(`${path}/`))) {
+      setUploadTarget("");
+    }
     await loadAssets();
   } catch (error) {
     showToast(`Delete failed: ${error.message}`, "error", 6000);
@@ -710,6 +753,8 @@ function buildAssetTree(assets) {
       }
     });
   });
+
+  folderPaths.add("");
 
   return { tree: root, folders: folderPaths };
 }
@@ -824,12 +869,15 @@ function renderAssetTable() {
     assetsTable.classList.add("hidden");
     assetsEmptyState.classList.remove("hidden");
     assetsEmptyState.textContent = "No assets uploaded yet.";
+    updateFolderSelector(new Set());
     return;
   }
 
   assetsTable.classList.remove("hidden");
   assetsEmptyState.classList.add("hidden");
   const { tree, folders } = buildAssetTree(state.assets);
+
+  updateFolderSelector(folders);
 
   Object.keys(state.assetFolders).forEach((path) => {
     if (!folders.has(path)) {
@@ -839,6 +887,37 @@ function renderAssetTable() {
 
   assetsTableBody.innerHTML = "";
   renderAssetNodes(tree, 0);
+}
+
+function setUploadTarget(value) {
+  const normalised = value || "";
+  state.assetUploadTarget = normalised;
+  if (assetFolderSelect && assetFolderSelect.value !== normalised) {
+    assetFolderSelect.value = normalised;
+  }
+}
+
+function updateFolderSelector(folderSet) {
+  if (!assetFolderSelect) {
+    return;
+  }
+
+  const folders = new Set(folderSet);
+  folders.add("");
+  const sorted = Array.from(folders).sort((a, b) => a.localeCompare(b));
+
+  const previous = state.assetUploadTarget || "";
+  assetFolderSelect.innerHTML = "";
+
+  sorted.forEach((folderPath) => {
+    const option = document.createElement("option");
+    option.value = folderPath;
+    option.textContent = folderPath ? folderPath : "Assets root";
+    assetFolderSelect.appendChild(option);
+  });
+
+  const hasPrevious = folders.has(previous);
+  setUploadTarget(hasPrevious ? previous : "");
 }
 
 function renderAssetNodes(nodes, depth) {
@@ -905,8 +984,17 @@ function renderAssetNodes(nodes, depth) {
     actionsCell.className = "actions-col";
 
     if (asset.is_dir) {
-      actionsCell.textContent = "—";
-      actionsCell.classList.add("muted");
+      const group = document.createElement("div");
+      group.className = "action-group";
+
+      const deleteFolderButton = document.createElement("button");
+      deleteFolderButton.textContent = "Delete";
+      deleteFolderButton.classList.add("danger");
+      deleteFolderButton.dataset.action = "delete-folder";
+      deleteFolderButton.dataset.assetPath = asset.path;
+      group.appendChild(deleteFolderButton);
+
+      actionsCell.appendChild(group);
     } else {
       const group = document.createElement("div");
       group.className = "action-group";
@@ -916,6 +1004,12 @@ function renderAssetNodes(nodes, depth) {
       copyButton.dataset.action = "copy";
       copyButton.dataset.assetPath = asset.path;
       group.appendChild(copyButton);
+
+      const moveButton = document.createElement("button");
+      moveButton.textContent = "Move / Rename";
+      moveButton.dataset.action = "move";
+      moveButton.dataset.assetPath = asset.path;
+      group.appendChild(moveButton);
 
       const downloadButton = document.createElement("button");
       downloadButton.textContent = "Download";
@@ -1254,6 +1348,10 @@ function bindEventListeners() {
   });
 
   if (ASSETS_UI_AVAILABLE) {
+    assetFolderSelect.addEventListener("change", (event) => {
+      setUploadTarget(event.target.value || "");
+    });
+
     newFolderButton.addEventListener("click", async () => {
       const input = window.prompt("Enter new folder path (relative to assets root)");
       if (input == null) {
@@ -1267,6 +1365,7 @@ function bindEventListeners() {
       try {
         await createAssetFolder(trimmed);
         showToast(`Created folder '${trimmed}'`, "success", 3000);
+        setUploadTarget(trimmed);
         await loadAssets();
       } catch (error) {
         showToast(`Failed to create folder: ${error.message}`, "error", 6000);
@@ -1288,7 +1387,7 @@ function bindEventListeners() {
       assetFileInput.value = "";
     });
 
-    assetsTableBody.addEventListener("click", (event) => {
+    assetsTableBody.addEventListener("click", async (event) => {
       const toggleButton = event.target.closest("button[data-asset-toggle]");
       if (toggleButton) {
         const folderPath = toggleButton.dataset.assetToggle;
@@ -1314,6 +1413,27 @@ function bindEventListeners() {
           .writeText(relativePath)
           .then(() => showToast(`Copied '${relativePath}'`, "success", 2500))
           .catch(() => showToast("Clipboard copy failed", "error", 5000));
+      } else if (action === "move") {
+        const relPath = button.dataset.assetPath;
+        if (!relPath) {
+          return;
+        }
+        const destination = window.prompt("Enter new path (relative to assets root)", relPath);
+        if (destination == null) {
+          return;
+        }
+        const trimmed = destination.trim().replace(/^\/+|\/+$/g, "");
+        if (!trimmed) {
+          showToast("Destination cannot be empty", "error", 5000);
+          return;
+        }
+        try {
+          await moveAsset(relPath, trimmed);
+          showToast(`Moved to '${trimmed}'`, "success", 3000);
+          await loadAssets();
+        } catch (error) {
+          showToast(`Move failed: ${error.message}`, "error", 6000);
+        }
       } else if (action === "download") {
         const url = button.dataset.assetUrl;
         if (url) {
@@ -1322,7 +1442,12 @@ function bindEventListeners() {
       } else if (action === "delete") {
         const relPath = button.dataset.assetPath;
         if (relPath) {
-          deleteAsset(relPath);
+          await deleteAsset(relPath);
+        }
+      } else if (action === "delete-folder") {
+        const relPath = button.dataset.assetPath;
+        if (relPath) {
+          await deleteFolder(relPath);
         }
       }
     });

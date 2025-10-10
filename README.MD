@@ -142,3 +142,5 @@ Asset management endpoints are also exposed:
 - `GET /config/assets` lists files and directories under the configured `assets/` root.
 - `POST /config/assets` uploads one or more files.
 - `POST /config/assets/folders` creates nested folders (the web UI surfaces this via the **New Folder** button in the Assets panel).
+- `POST /config/assets/move` moves/renames an asset within the assets root.
+- `DELETE /config/assets/{path}` removes files, or folders when `?recursive=true` is supplied.

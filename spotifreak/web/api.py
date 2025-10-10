@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -119,6 +120,12 @@ class AssetSummary(BaseModel):
 
 class FolderCreatePayload(BaseModel):
     path: str
+
+
+class AssetMovePayload(BaseModel):
+    source: str
+    destination: str
+    overwrite: bool = False
 
 
 def _resolve_config_dir(override: Optional[str]) -> Optional[Path]:
@@ -529,6 +536,57 @@ def create_asset_folder(payload: FolderCreatePayload, config_dir: Optional[str] 
     return _asset_metadata(context.paths.assets_dir, destination)
 
 
+@app.post("/config/assets/move", response_model=AssetSummary)
+def move_asset(payload: AssetMovePayload, config_dir: Optional[str] = Query(default=None)):
+    context = _load_app_context(config_dir)
+    source_rel = _sanitize_asset_path(payload.source)
+    destination_rel = _sanitize_asset_path(payload.destination)
+
+    if source_rel == destination_rel:
+        raise HTTPException(status_code=400, detail="Source and destination are identical")
+
+    source_path = context.paths.assets_dir / source_rel
+    destination_path = context.paths.assets_dir / destination_rel
+
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="Source asset not found")
+
+    try:
+        destination_path.relative_to(context.paths.assets_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Destination must be within assets directory")
+
+    if destination_path.exists():
+        if not payload.overwrite:
+            raise HTTPException(status_code=409, detail="Destination already exists")
+        if destination_path.is_dir():
+            raise HTTPException(status_code=400, detail="Cannot overwrite a directory")
+        destination_path.unlink()
+
+    destination_parent = destination_path.parent
+    if not destination_parent.exists():
+        raise HTTPException(status_code=404, detail="Destination folder not found")
+    if not destination_parent.is_dir():
+        raise HTTPException(status_code=400, detail="Destination parent is not a directory")
+
+    if source_path.is_dir():
+        try:
+            destination_path.relative_to(source_path)
+            raise HTTPException(status_code=400, detail="Cannot move a directory into itself")
+        except ValueError:
+            pass
+
+    try:
+        source_path.rename(destination_path)
+    except OSError:
+        try:
+            shutil.move(str(source_path), str(destination_path))
+        except Exception as exc:  # pragma: no cover - filesystem edge cases
+            raise HTTPException(status_code=500, detail=f"Failed to move asset: {exc}") from exc
+
+    return _asset_metadata(context.paths.assets_dir, destination_path)
+
+
 @app.get("/config/assets/{asset_path:path}")
 def get_asset(asset_path: str, config_dir: Optional[str] = Query(default=None)):
     context = _load_app_context(config_dir)
@@ -557,11 +615,15 @@ async def upload_asset(
 
     if target_dir:
         relative_dir = _sanitize_asset_path(target_dir)
+        _validate_folder_path(relative_dir)
         destination_dir = context.paths.assets_dir / relative_dir
+        if not destination_dir.exists():
+            raise HTTPException(status_code=404, detail="Target folder not found")
+        if not destination_dir.is_dir():
+            raise HTTPException(status_code=400, detail="Target path is not a directory")
     else:
         destination_dir = context.paths.assets_dir
-
-    destination_dir.mkdir(parents=True, exist_ok=True)
+        destination_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = Path(file.filename or "asset").name
     target_path = _unique_asset_path(destination_dir, safe_name)
@@ -576,18 +638,31 @@ async def upload_asset(
 
 
 @app.delete("/config/assets/{asset_path:path}", status_code=204)
-def delete_asset(asset_path: str, config_dir: Optional[str] = Query(default=None)):
+def delete_asset(
+    asset_path: str,
+    config_dir: Optional[str] = Query(default=None),
+    recursive: bool = Query(default=False),
+):
     context = _load_app_context(config_dir)
     relative_path = _sanitize_asset_path(asset_path)
     path = context.paths.assets_dir / relative_path
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Asset not found: {asset_path}")
     if path.is_dir():
-        raise HTTPException(status_code=400, detail="Directory deletion is not supported")
-    try:
-        path.unlink()
-    except Exception as exc:  # pragma: no cover - filesystem errors
-        raise HTTPException(status_code=500, detail=f"Failed to delete asset: {exc}") from exc
+        if not recursive and any(path.iterdir()):
+            raise HTTPException(status_code=409, detail="Folder is not empty (use recursive=true)")
+        try:
+            if recursive:
+                shutil.rmtree(path)
+            else:
+                path.rmdir()
+        except Exception as exc:  # pragma: no cover - filesystem errors
+            raise HTTPException(status_code=500, detail=f"Failed to delete folder: {exc}") from exc
+    else:
+        try:
+            path.unlink()
+        except Exception as exc:  # pragma: no cover - filesystem errors
+            raise HTTPException(status_code=500, detail=f"Failed to delete asset: {exc}") from exc
     return None
 
 

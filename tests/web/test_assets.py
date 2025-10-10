@@ -1,3 +1,5 @@
+import io
+
 import yaml
 from fastapi.testclient import TestClient
 
@@ -84,3 +86,78 @@ def test_create_asset_folder_rejects_traversal(tmp_path):
 
     assert response.status_code == 400
     assert "cannot contain" in response.json()["detail"]
+
+
+def test_upload_asset_to_specific_folder(tmp_path):
+    base_dir = _setup_app_context(tmp_path)
+    (base_dir / "assets" / "covers" / "night").mkdir(parents=True)
+    client = TestClient(app)
+
+    files = {"file": ("cover.png", io.BytesIO(b"fake"), "image/png")}
+    response = client.post(
+        "/config/assets",
+        params={"config_dir": str(base_dir), "target_dir": "covers/night"},
+        files=files,
+    )
+
+    assert response.status_code == 201
+    stored = base_dir / "assets" / "covers" / "night"
+    assert any(stored.iterdir())
+
+
+def test_upload_asset_missing_folder(tmp_path):
+    base_dir = _setup_app_context(tmp_path)
+    client = TestClient(app)
+
+    files = {"file": ("cover.png", io.BytesIO(b"fake"), "image/png")}
+    response = client.post(
+        "/config/assets",
+        params={"config_dir": str(base_dir), "target_dir": "covers/night"},
+        files=files,
+    )
+
+    assert response.status_code == 404
+
+
+def test_move_asset(tmp_path):
+    base_dir = _setup_app_context(tmp_path)
+    source_dir = base_dir / "assets" / "covers"
+    source_dir.mkdir(parents=True)
+    destination_dir = base_dir / "assets" / "hero"
+    destination_dir.mkdir(parents=True)
+    source_file = source_dir / "night.png"
+    source_file.write_bytes(b"fake")
+
+    client = TestClient(app)
+    response = client.post(
+        "/config/assets/move",
+        json={"source": "covers/night.png", "destination": "hero/night.png"},
+        params={"config_dir": str(base_dir)},
+    )
+
+    assert response.status_code == 200
+    assert not source_file.exists()
+    assert (destination_dir / "night.png").exists()
+
+
+def test_delete_folder_recursive(tmp_path):
+    base_dir = _setup_app_context(tmp_path)
+    target_dir = base_dir / "assets" / "covers"
+    nested_file = target_dir / "night" / "cover.png"
+    nested_file.parent.mkdir(parents=True)
+    nested_file.write_bytes(b"fake")
+
+    client = TestClient(app)
+
+    response = client.delete(
+        "/config/assets/covers",
+        params={"config_dir": str(base_dir)},
+    )
+    assert response.status_code == 409
+
+    response = client.delete(
+        "/config/assets/covers",
+        params={"config_dir": str(base_dir), "recursive": True},
+    )
+    assert response.status_code == 204
+    assert not target_dir.exists()

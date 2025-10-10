@@ -58,6 +58,72 @@ The following sections outline the work needed across API and UI layers, plus va
 
 ---
 
+## 1b. Uploads Targeting Specific Folders
+
+### Goals
+- Let users choose a destination directory before uploading files.
+- Fail gracefully if the selected directory goes stale.
+
+### API Changes
+- Reuse `POST /config/assets` with a stricter `target_dir` contract:
+  - Optionally add `auto_create` to control whether missing directories should be created or rejected with `404`.
+  - Include the resolved folder in responses so the UI can refresh that branch only.
+- Add tests covering uploads into nested folders, missing directories, and the auto-create toggle.
+
+### UI Work
+- Surface a folder selector (drop-down or tree) alongside the Upload button.
+- Default to the folder that the user last expanded/selected in the asset tree.
+- Pass `target_dir` when uploading; on success, refresh the affected branch and show a toast.
+- Display backend errors if the folder no longer exists.
+
+### Testing
+- Manual verification uploading to root and nested directories.
+- Automated integration test if/when UI test harness is available.
+
+---
+
+## 1c. Move / Rename Assets
+
+### Goals
+- Allow users to move or rename assets without re-uploading.
+
+### API Changes
+- Introduce `POST /config/assets/move` with payload `{ "source": "covers/night.jpg", "destination": "hero/night.jpg" }`.
+  - Validate source/destination, prevent traversal, and optionally allow overwriting via a flag.
+  - Return updated metadata for the moved asset.
+- Tests: happy path, destination exists (409), missing source (404), invalid paths (400).
+
+### UI Work
+- Add a “Move / Rename” action in the asset row.
+- Modal dialog to pick the target folder (reuse selector) and adjust the filename.
+- Refresh the tree, highlight the new location, and display a toast on success.
+
+### Testing
+- Manual scenarios for move, rename, cancellation, and error handling.
+
+---
+
+## 1d. Delete Folders (Recursive)
+
+### Goals
+- Let users delete folders (optionally with contents) from the UI.
+
+### API Changes
+- Add `DELETE /config/assets/{folder_path}` supporting `?recursive=true`.
+  - Require the flag for non-empty folders (otherwise return `409`).
+  - Validate that the target is a directory under the assets root and not the root itself.
+- Tests for empty folder delete, recursive delete, missing folder, invalid path.
+
+### UI Work
+- Provide a “Delete Folder” action (context menu or button).
+- Confirmation dialog explaining that contents will be removed.
+- Refresh the asset tree and collapse any removed branches.
+
+### Testing
+- Manual checks deleting empty/non-empty folders and ensuring errors show correctly.
+
+---
+
 ## 2. Image Hover Preview
 
 ### Goals
@@ -103,6 +169,8 @@ The following sections outline the work needed across API and UI layers, plus va
 ## Next Steps
 1. Implement and test the `POST /assets/folders` endpoint.
 2. Update the assets UI with the new folder creation workflow.
-3. Add hover preview tooling, starting with frontend changes and validating backend accessibility.
-4. Document the new capabilities in README/API docs and announce to users.
-
+3. Extend uploads so users can target specific folders.
+4. Add move/rename capability (API + UI).
+5. Implement recursive folder deletion with confirmation UX.
+6. Add hover preview tooling, starting with frontend changes and validating backend accessibility.
+7. Document the new capabilities in README/API docs and announce to users.
