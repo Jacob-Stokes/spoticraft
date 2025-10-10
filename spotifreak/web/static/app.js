@@ -21,6 +21,7 @@ const assetsTableBody = assetsTable ? assetsTable.querySelector("tbody") : null;
 const assetsEmptyState = document.getElementById("assets-empty");
 const uploadAssetButton = document.getElementById("upload-asset-button");
 const assetFileInput = document.getElementById("asset-file-input");
+const newFolderButton = document.getElementById("new-folder-button");
 
 const editorModal = document.getElementById("editor-modal");
 const editorTitle = document.getElementById("editor-title");
@@ -60,6 +61,7 @@ const ASSETS_UI_AVAILABLE = Boolean(
   assetsTable &&
   assetsTableBody &&
   assetsEmptyState &&
+  newFolderButton &&
   uploadAssetButton &&
   assetFileInput,
 );
@@ -606,6 +608,15 @@ async function uploadAsset(file) {
   } catch (error) {
     showToast(`Upload failed: ${error.message}`, "error", 6000);
   }
+}
+
+async function createAssetFolder(path) {
+  const payload = { path };
+  await fetchJson("/config/assets/folders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 async function deleteAsset(name) {
@@ -1243,6 +1254,25 @@ function bindEventListeners() {
   });
 
   if (ASSETS_UI_AVAILABLE) {
+    newFolderButton.addEventListener("click", async () => {
+      const input = window.prompt("Enter new folder path (relative to assets root)");
+      if (input == null) {
+        return;
+      }
+      const trimmed = input.trim().replace(/^\/+|\/+$/g, "");
+      if (!trimmed) {
+        showToast("Folder name cannot be empty", "error", 5000);
+        return;
+      }
+      try {
+        await createAssetFolder(trimmed);
+        showToast(`Created folder '${trimmed}'`, "success", 3000);
+        await loadAssets();
+      } catch (error) {
+        showToast(`Failed to create folder: ${error.message}`, "error", 6000);
+      }
+    });
+
     uploadAssetButton.addEventListener("click", () => {
       assetFileInput.click();
     });

@@ -42,6 +42,8 @@ app = FastAPI(title="Spotifreak API", version="0.1.0")
 
 STATIC_DIR = Path(__file__).with_name("static")
 
+MAX_ASSET_FOLDER_DEPTH = 8
+
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -113,6 +115,10 @@ class AssetSummary(BaseModel):
     mime_type: Optional[str] = None
     url: Optional[str] = None
     is_dir: bool = False
+
+
+class FolderCreatePayload(BaseModel):
+    path: str
 
 
 def _resolve_config_dir(override: Optional[str]) -> Optional[Path]:
@@ -340,6 +346,16 @@ def _sanitize_asset_path(raw_path: str) -> Path:
     return Path(*cleaned_parts)
 
 
+def _validate_folder_path(path: Path) -> None:
+    if len(path.parts) > MAX_ASSET_FOLDER_DEPTH:
+        raise HTTPException(status_code=400, detail="Folder path exceeds maximum depth")
+    for segment in path.parts:
+        if not segment.strip():
+            raise HTTPException(status_code=400, detail="Folder names cannot be empty")
+        if any(char in segment for char in {"/", "\\"}):
+            raise HTTPException(status_code=400, detail="Folder names cannot contain path separators")
+
+
 def _asset_metadata(root: Path, path: Path) -> AssetSummary:
     try:
         stat_result = path.stat()
@@ -490,6 +506,27 @@ def list_assets(config_dir: Optional[str] = Query(default=None)):
     ]
     assets.sort(key=lambda item: (not item.is_dir, item.path.lower()))
     return {"assets": assets}
+
+
+@app.post("/config/assets/folders", response_model=AssetSummary, status_code=201)
+def create_asset_folder(payload: FolderCreatePayload, config_dir: Optional[str] = Query(default=None)):
+    context = _load_app_context(config_dir)
+    relative_path = _sanitize_asset_path(payload.path)
+    _validate_folder_path(relative_path)
+
+    destination = context.paths.assets_dir / relative_path
+
+    if destination.exists():
+        raise HTTPException(status_code=409, detail="Folder already exists")
+
+    try:
+        destination.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="Folder already exists")
+    except OSError as exc:  # pragma: no cover - filesystem permission issues
+        raise HTTPException(status_code=500, detail=f"Failed to create folder: {exc}") from exc
+
+    return _asset_metadata(context.paths.assets_dir, destination)
 
 
 @app.get("/config/assets/{asset_path:path}")

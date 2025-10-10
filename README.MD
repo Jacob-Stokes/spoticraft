@@ -136,3 +136,9 @@ uvicorn spotifreak.web.api:app --host 0.0.0.0 --port 8080
 ```
 
 Set `SPOTIFREAK_CONFIG_DIR` to point at your configuration directory (defaults to `~/.spotifreak`). Available endpoints include `GET /status`, `GET /syncs`, `POST /syncs/{id}/start|pause|resume|delete`, and `GET /syncs/{id}/history?tail=10`. Keep the supervisor running alongside the API (e.g., via Docker Compose) so IPC commands succeed.
+
+Asset management endpoints are also exposed:
+
+- `GET /config/assets` lists files and directories under the configured `assets/` root.
+- `POST /config/assets` uploads one or more files.
+- `POST /config/assets/folders` creates nested folders (the web UI surfaces this via the **New Folder** button in the Assets panel).
